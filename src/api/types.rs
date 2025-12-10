@@ -129,8 +129,10 @@ pub struct Style {
 /// Image export response
 #[derive(Debug, Deserialize)]
 pub struct ImageResponse {
+    #[serde(default)]
     pub images: std::collections::HashMap<String, Option<String>>,
     pub err: Option<String>,
+    pub status: Option<u16>,
 }
 
 /// Project info

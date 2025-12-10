@@ -70,23 +70,57 @@ async fn export_file(
         format!("Exporting {} node(s) as {} at {}x...", ids_to_export.len(), format, scale).bold()
     );
 
-    // Get export URLs
-    let images = client.export_images(file_key, &ids_to_export, format, scale).await?;
+    // Get export URLs (batch in chunks to avoid API limits)
+    // Figma API has strict rate limits, so we batch and add delays
+    const BATCH_SIZE: usize = 20;
+    let mut all_images: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let chunks: Vec<_> = ids_to_export.chunks(BATCH_SIZE).collect();
+    let total_chunks = chunks.len();
 
-    if let Some(err) = images.err {
-        println!("{}: {}", "API Error".red(), err);
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        let chunk_vec: Vec<String> = chunk.to_vec();
+        let images = client.export_images(file_key, &chunk_vec, format, scale).await?;
+
+        if let Some(err) = &images.err {
+            if err.contains("Rate limit") {
+                println!("{}: {} - waiting 30s...", "Rate limited".yellow(), err);
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                // Retry this chunk
+                let retry = client.export_images(file_key, &chunk_vec, format, scale).await?;
+                if retry.err.is_none() {
+                    all_images.extend(retry.images);
+                }
+            } else {
+                println!("{}: {}", "API Error".red(), err);
+                if images.status == Some(400) || images.status == Some(404) {
+                    println!("{}", "  Some node IDs may be invalid or inaccessible".yellow());
+                }
+            }
+            continue;
+        }
+
+        all_images.extend(images.images);
+
+        // Add delay between batches to avoid rate limiting (except for last batch)
+        if i < total_chunks - 1 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    if all_images.is_empty() {
+        println!("{}", "No images were exported".yellow());
         return Ok(());
     }
 
     // Download each image
-    let pb = ProgressBar::new(ids_to_export.len() as u64);
+    let pb = ProgressBar::new(all_images.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")?
             .progress_chars("#>-"),
     );
 
-    for (node_id, url) in images.images {
+    for (node_id, url) in all_images {
         if let Some(url) = url {
             let bytes = client.download_image(&url).await?;
             let filename = format!("{}.{}", node_id.replace(":", "-"), format);
