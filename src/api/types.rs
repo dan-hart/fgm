@@ -164,7 +164,6 @@ pub struct ProjectFilesResponse {
 
 /// Version info
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Version {
     pub id: String,
     pub created_at: String,

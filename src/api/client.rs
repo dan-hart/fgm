@@ -1,5 +1,5 @@
 use anyhow::Result;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 
 const FIGMA_API_BASE: &str = "https://api.figma.com/v1";
@@ -7,6 +7,7 @@ const FIGMA_API_BASE: &str = "https://api.figma.com/v1";
 /// Figma API client
 pub struct FigmaClient {
     client: Client,
+    #[allow(dead_code)]
     token: String,
 }
 
@@ -14,9 +15,10 @@ impl FigmaClient {
     /// Create a new Figma client with the given access token
     pub fn new(token: String) -> Result<Self> {
         let mut headers = HeaderMap::new();
+        // Figma uses X-Figma-Token header, not Bearer auth
         headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))?,
+            "X-Figma-Token",
+            HeaderValue::from_str(&token)?,
         );
 
         let client = Client::builder()
