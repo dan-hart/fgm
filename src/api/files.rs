@@ -51,4 +51,28 @@ impl FigmaClient {
         let files: ProjectFilesResponse = response.json().await?;
         Ok(files)
     }
+
+    /// Get published components in a team library
+    pub async fn get_team_components(&self, team_id: &str) -> Result<TeamComponentsResponse> {
+        let url = format!("{}/teams/{}/components", self.base_url(), team_id);
+        let response = self.http().get(&url).send().await?;
+        let components: TeamComponentsResponse = response.json().await?;
+        Ok(components)
+    }
+
+    /// Get published styles in a team library
+    pub async fn get_team_styles(&self, team_id: &str) -> Result<TeamStylesResponse> {
+        let url = format!("{}/teams/{}/styles", self.base_url(), team_id);
+        let response = self.http().get(&url).send().await?;
+        let styles: TeamStylesResponse = response.json().await?;
+        Ok(styles)
+    }
+
+    /// Get component by key
+    pub async fn get_component(&self, component_key: &str) -> Result<ComponentDetailResponse> {
+        let url = format!("{}/components/{}", self.base_url(), component_key);
+        let response = self.http().get(&url).send().await?;
+        let component: ComponentDetailResponse = response.json().await?;
+        Ok(component)
+    }
 }

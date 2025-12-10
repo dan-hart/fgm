@@ -185,3 +185,91 @@ pub struct VersionUser {
 pub struct VersionsResponse {
     pub versions: Vec<Version>,
 }
+
+/// Team component from published library
+#[derive(Debug, Deserialize)]
+pub struct TeamComponent {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub file_key: String,
+    pub node_id: String,
+    pub thumbnail_url: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Team components response
+#[derive(Debug, Deserialize)]
+pub struct TeamComponentsResponse {
+    pub status: Option<u16>,
+    pub error: Option<bool>,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub meta: Option<TeamComponentsMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamComponentsMeta {
+    #[serde(default)]
+    pub components: Vec<TeamComponent>,
+}
+
+/// Team style from published library
+#[derive(Debug, Deserialize)]
+pub struct TeamStyle {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub style_type: String,
+    pub file_key: String,
+    pub node_id: String,
+    pub thumbnail_url: Option<String>,
+}
+
+/// Team styles response
+#[derive(Debug, Deserialize)]
+pub struct TeamStylesResponse {
+    pub status: Option<u16>,
+    pub error: Option<bool>,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub meta: Option<TeamStylesMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamStylesMeta {
+    #[serde(default)]
+    pub styles: Vec<TeamStyle>,
+}
+
+/// Component detail response
+#[derive(Debug, Deserialize)]
+pub struct ComponentDetailResponse {
+    pub status: Option<u16>,
+    pub error: Option<bool>,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub meta: Option<ComponentDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ComponentDetail {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub file_key: String,
+    pub node_id: String,
+    pub thumbnail_url: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub containing_frame: Option<ContainingFrame>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContainingFrame {
+    pub name: Option<String>,
+    pub node_id: Option<String>,
+    pub page_id: Option<String>,
+    pub page_name: Option<String>,
+}

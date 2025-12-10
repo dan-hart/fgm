@@ -117,6 +117,9 @@ pub enum ExportCommands {
         /// Output directory
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
+        /// Custom filename (without extension). Only works with single node export.
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Batch export from a manifest file
     Batch {

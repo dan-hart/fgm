@@ -19,6 +19,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             format,
             scale,
             output,
+            name,
         } => {
             // Parse URL or file key
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
@@ -31,7 +32,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
                 }
             }
 
-            export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output).await
+            export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output, name.as_deref()).await
         }
         ExportCommands::Batch { manifest } => batch_export(&client, &manifest).await,
     }
@@ -45,6 +46,7 @@ async fn export_file(
     format: &str,
     scale: u8,
     output: &Path,
+    custom_name: Option<&str>,
 ) -> Result<()> {
     // Ensure output directory exists
     fs::create_dir_all(output)?;
@@ -120,10 +122,20 @@ async fn export_file(
             .progress_chars("#>-"),
     );
 
-    for (node_id, url) in all_images {
+    // Use custom name only if there's a single image
+    let use_custom_name = custom_name.is_some() && all_images.len() == 1;
+
+    for (i, (node_id, url)) in all_images.into_iter().enumerate() {
         if let Some(url) = url {
             let bytes = client.download_image(&url).await?;
-            let filename = format!("{}.{}", node_id.replace(":", "-"), format);
+            let filename = if use_custom_name {
+                format!("{}.{}", custom_name.unwrap(), format)
+            } else if let Some(name) = custom_name {
+                // Multiple images with custom name - append index
+                format!("{}-{}.{}", name, i + 1, format)
+            } else {
+                format!("{}.{}", node_id.replace(":", "-"), format)
+            };
             let filepath = output.join(&filename);
             fs::write(&filepath, bytes)?;
             pb.set_message(filename);
@@ -179,6 +191,7 @@ async fn batch_export(client: &FigmaClient, manifest_path: &Path) -> Result<()> 
             &export.format.unwrap_or_else(|| "png".to_string()),
             export.scale.unwrap_or(2),
             &output,
+            export.name.as_deref(),
         )
         .await?;
     }

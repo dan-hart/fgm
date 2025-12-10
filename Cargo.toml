@@ -26,6 +26,9 @@ serde_json = "1"
 # Image processing
 image = "0.25"
 
+# Terminal image display
+viuer = "0.7"
+
 # Auth/Config (cross-platform)
 keyring = "3"
 directories = "5"
