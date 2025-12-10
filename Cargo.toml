@@ -1,0 +1,56 @@
+[package]
+name = "fgm"
+version = "0.1.0"
+edition = "2024"
+description = "Figma CLI - Export assets, compare designs, extract tokens"
+authors = ["Dan Hart"]
+license = "MIT"
+repository = "https://github.com/danhart/fgm"
+keywords = ["figma", "cli", "design", "export"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI framework
+clap = { version = "4", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# JSON/Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Image processing
+image = "0.25"
+
+# Auth/Config (cross-platform)
+keyring = "3"
+directories = "5"
+toml = "0.8"
+
+# Output formatting
+tabled = "0.16"
+colored = "2"
+indicatif = "0.17"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# URL handling
+url = "2"
+
+# Open browser for auth
+open = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Optimize release builds
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
