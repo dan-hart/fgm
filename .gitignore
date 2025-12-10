@@ -11,9 +11,34 @@
 # macOS
 .DS_Store
 
-# Environment
+# Environment and Secrets - NEVER commit these
 .env
+.env.*
+*.env
 .env.local
+.env.development
+.env.production
+
+# Credential files
+*credentials*
+*secrets*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+config.local.json
+
+# API tokens and keys
+*token*
+*figma*token*
+.figma-token
 
 # Test outputs
 /test-output/
+/tmp/
+
+# Keychain exports
+*.keychain
+*.keychain-db

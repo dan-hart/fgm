@@ -1,0 +1,15 @@
+# Git-secrets allowed patterns for fgm project
+# These are intentional references to environment variables and config
+
+# .gitignore entries for files that should be ignored
+\.figma-token
+
+# Code references to environment variable names (not actual secrets)
+env::var\("FIGMA_TOKEN"\)
+const USERNAME.*figma_token
+FIGMA_TOKEN
+FIGMA_TOKEN.*env
+
+# Documentation examples with placeholder values
+YOUR_FIGMA_TOKEN
+<FIGMA_TOKEN>
