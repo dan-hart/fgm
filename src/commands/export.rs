@@ -1,4 +1,4 @@
-use crate::api::FigmaClient;
+use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::ExportCommands;
 use anyhow::Result;
@@ -13,14 +13,25 @@ pub async fn run(command: ExportCommands) -> Result<()> {
 
     match command {
         ExportCommands::File {
-            file_key,
+            file_key_or_url,
             node,
             all_frames,
             format,
             scale,
             output,
         } => {
-            export_file(&client, &file_key, &node, all_frames, &format.to_string(), scale, &output).await
+            // Parse URL or file key
+            let parsed = FigmaUrl::parse(&file_key_or_url)?;
+
+            // Merge node IDs from URL and command line
+            let mut node_ids = node;
+            if let Some(url_node_id) = parsed.node_id {
+                if !node_ids.contains(&url_node_id) {
+                    node_ids.push(url_node_id);
+                }
+            }
+
+            export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output).await
         }
         ExportCommands::Batch { manifest } => batch_export(&client, &manifest).await,
     }
@@ -43,7 +54,7 @@ async fn export_file(
         let file = client.get_file(file_key).await?;
         extract_frame_ids(&file.document)
     } else if node_ids.is_empty() {
-        println!("{}", "No nodes specified. Use --node or --all-frames".yellow());
+        println!("{}", "No nodes specified. Use --node, --all-frames, or a URL with ?node-id=".yellow());
         return Ok(());
     } else {
         node_ids.to_vec()
@@ -120,11 +131,15 @@ async fn batch_export(client: &FigmaClient, manifest_path: &Path) -> Result<()> 
     );
 
     for export in manifest.exports {
-        let ids = vec![export.node.clone()];
+        // Support URLs in manifest files too
+        let parsed = FigmaUrl::parse(&export.file)?;
+        let node_id = export.node.or(parsed.node_id).unwrap_or_default();
+        let ids = if node_id.is_empty() { vec![] } else { vec![node_id] };
+
         let output = std::path::PathBuf::from(&export.output.unwrap_or_else(|| ".".to_string()));
         export_file(
             client,
-            &export.file,
+            &parsed.file_key,
             &ids,
             false,
             &export.format.unwrap_or_else(|| "png".to_string()),
@@ -145,7 +160,8 @@ struct BatchManifest {
 #[derive(serde::Deserialize)]
 struct ExportItem {
     file: String,
-    node: String,
+    #[serde(default)]
+    node: Option<String>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]

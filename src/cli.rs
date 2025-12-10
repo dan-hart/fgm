@@ -74,21 +74,21 @@ pub enum FilesCommands {
     },
     /// Get file metadata
     Get {
-        /// Figma file key
-        file_key: String,
+        /// Figma file key or URL (e.g., abc123 or https://figma.com/file/abc123/...)
+        file_key_or_url: String,
     },
     /// Show node tree structure
     Tree {
-        /// Figma file key
-        file_key: String,
+        /// Figma file key or URL
+        file_key_or_url: String,
         /// Maximum depth to display
         #[arg(short, long, default_value = "3")]
         depth: u32,
     },
     /// Show version history
     Versions {
-        /// Figma file key
-        file_key: String,
+        /// Figma file key or URL
+        file_key_or_url: String,
         /// Number of versions to show
         #[arg(short, long, default_value = "10")]
         limit: u32,
@@ -100,9 +100,9 @@ pub enum FilesCommands {
 pub enum ExportCommands {
     /// Export a single file or specific nodes
     File {
-        /// Figma file key
-        file_key: String,
-        /// Node IDs to export (can be specified multiple times)
+        /// Figma file key or URL (e.g., abc123 or https://figma.com/file/abc123/...?node-id=1-2)
+        file_key_or_url: String,
+        /// Node IDs to export (can be specified multiple times). If URL contains node-id, it will be used.
         #[arg(short, long)]
         node: Vec<String>,
         /// Export all top-level frames

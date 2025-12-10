@@ -1,4 +1,4 @@
-use crate::api::FigmaClient;
+use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::FilesCommands;
 use anyhow::Result;
@@ -10,9 +10,18 @@ pub async fn run(command: FilesCommands) -> Result<()> {
 
     match command {
         FilesCommands::List { project, team } => list(&client, project, team).await,
-        FilesCommands::Get { file_key } => get(&client, &file_key).await,
-        FilesCommands::Tree { file_key, depth } => tree(&client, &file_key, depth).await,
-        FilesCommands::Versions { file_key, limit } => versions(&client, &file_key, limit).await,
+        FilesCommands::Get { file_key_or_url } => {
+            let parsed = FigmaUrl::parse(&file_key_or_url)?;
+            get(&client, &parsed.file_key).await
+        }
+        FilesCommands::Tree { file_key_or_url, depth } => {
+            let parsed = FigmaUrl::parse(&file_key_or_url)?;
+            tree(&client, &parsed.file_key, depth).await
+        }
+        FilesCommands::Versions { file_key_or_url, limit } => {
+            let parsed = FigmaUrl::parse(&file_key_or_url)?;
+            versions(&client, &parsed.file_key, limit).await
+        }
     }
 }
 
