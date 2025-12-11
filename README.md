@@ -1,5 +1,7 @@
 # fgm - Figma CLI
 
+> **Note:** This is an independent hobby project to experiment with the Figma API. It has no affiliation with Figma or Adobe.
+
 A fast, cross-platform command-line interface for Figma. Export assets, compare designs, extract tokens, and preview screens directly in your terminal.
 
 ## Features
