@@ -1,7 +1,11 @@
 pub mod auth;
 pub mod compare;
+pub mod compare_url;
 pub mod components;
 pub mod export;
 pub mod files;
+pub mod map;
 pub mod preview;
+pub mod snapshot;
+pub mod sync;
 pub mod tokens;

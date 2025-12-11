@@ -1,6 +1,6 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
-use crate::cli::ExportCommands;
+use crate::cli::{ExportCommands, Platform};
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -20,6 +20,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             scale,
             output,
             name,
+            platform,
         } => {
             // Parse URL or file key
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
@@ -32,7 +33,12 @@ pub async fn run(command: ExportCommands) -> Result<()> {
                 }
             }
 
-            export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output, name.as_deref()).await
+            // Handle platform-specific export
+            if let Some(platform) = platform {
+                export_platform(&client, &parsed.file_key, &node_ids, all_frames, &output, name.as_deref(), platform).await
+            } else {
+                export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output, name.as_deref()).await
+            }
         }
         ExportCommands::Batch { manifest } => batch_export(&client, &manifest).await,
     }
@@ -194,6 +200,147 @@ async fn batch_export(client: &FigmaClient, manifest_path: &Path) -> Result<()> 
             export.name.as_deref(),
         )
         .await?;
+    }
+
+    Ok(())
+}
+
+/// Export for specific platform with all required sizes
+async fn export_platform(
+    client: &FigmaClient,
+    file_key: &str,
+    node_ids: &[String],
+    all_frames: bool,
+    output: &Path,
+    custom_name: Option<&str>,
+    platform: Platform,
+) -> Result<()> {
+    let ids_to_export: Vec<String> = if all_frames {
+        let file = client.get_file(file_key).await?;
+        extract_frame_ids(&file.document)
+    } else if node_ids.is_empty() {
+        println!("{}", "No nodes specified. Use --node, --all-frames, or a URL with ?node-id=".yellow());
+        return Ok(());
+    } else {
+        node_ids.to_vec()
+    };
+
+    if ids_to_export.is_empty() {
+        println!("{}", "No frames found to export".yellow());
+        return Ok(());
+    }
+
+    // Define scale factors for each platform
+    let scales: Vec<(u8, &str)> = match platform {
+        Platform::Ios => vec![(1, ""), (2, "@2x"), (3, "@3x")],
+        Platform::Android => vec![
+            (1, "mdpi"),
+            (2, "hdpi"),    // 1.5x rounded to 2
+            (2, "xhdpi"),   // 2x
+            (3, "xxhdpi"),  // 3x
+            (4, "xxxhdpi"), // 4x
+        ],
+        Platform::Web => vec![(1, ""), (2, "@2x")],
+    };
+
+    let platform_name = match platform {
+        Platform::Ios => "iOS",
+        Platform::Android => "Android",
+        Platform::Web => "Web",
+    };
+
+    println!(
+        "{}",
+        format!("Exporting {} node(s) for {} ({} sizes)...",
+            ids_to_export.len(), platform_name, scales.len()).bold()
+    );
+
+    // Create platform directory structure
+    match platform {
+        Platform::Android => {
+            // Android needs drawable-* directories
+            for (_, suffix) in &scales {
+                fs::create_dir_all(output.join(format!("drawable-{}", suffix)))?;
+            }
+        }
+        _ => {
+            fs::create_dir_all(output)?;
+        }
+    }
+
+    // Export at each scale
+    for (scale, suffix) in &scales {
+        println!("  Exporting at {}x ({})...", scale, if suffix.is_empty() { "1x" } else { suffix });
+
+        let images = client.export_images(file_key, &ids_to_export, "png", *scale).await?;
+
+        if let Some(err) = &images.err {
+            println!("{}: {}", "API Error".red(), err);
+            continue;
+        }
+
+        for (node_id, url) in images.images {
+            if let Some(url) = url {
+                let bytes = client.download_image(&url).await?;
+                let default_name = node_id.replace(':', "-");
+                let base_name = custom_name.unwrap_or(&default_name);
+
+                let filepath = match platform {
+                    Platform::Ios => {
+                        // iOS: icon@2x.png, icon@3x.png
+                        let filename = if suffix.is_empty() {
+                            format!("{}.png", base_name)
+                        } else {
+                            format!("{}{}.png", base_name, suffix)
+                        };
+                        output.join(filename)
+                    }
+                    Platform::Android => {
+                        // Android: drawable-hdpi/icon.png, etc.
+                        let dir = output.join(format!("drawable-{}", suffix));
+                        dir.join(format!("{}.png", base_name))
+                    }
+                    Platform::Web => {
+                        // Web: icon.png, icon@2x.png
+                        let filename = if suffix.is_empty() {
+                            format!("{}.png", base_name)
+                        } else {
+                            format!("{}{}.png", base_name, suffix)
+                        };
+                        output.join(filename)
+                    }
+                };
+
+                fs::write(&filepath, bytes)?;
+            }
+        }
+
+        // Rate limit protection
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    println!("{}", format!("Exported to {}", output.display()).green());
+
+    // Print platform-specific guidance
+    match platform {
+        Platform::Ios => {
+            println!();
+            println!("{}", "iOS Usage:".bold());
+            println!("  Add images to Assets.xcassets in Xcode");
+            println!("  Use: Image(\"name\") or UIImage(named: \"name\")");
+        }
+        Platform::Android => {
+            println!();
+            println!("{}", "Android Usage:".bold());
+            println!("  Copy drawable-* folders to app/src/main/res/");
+            println!("  Use: @drawable/name or R.drawable.name");
+        }
+        Platform::Web => {
+            println!();
+            println!("{}", "Web Usage:".bold());
+            println!("  Use srcset for responsive images:");
+            println!("  <img src=\"icon.png\" srcset=\"icon@2x.png 2x\">");
+        }
     }
 
     Ok(())

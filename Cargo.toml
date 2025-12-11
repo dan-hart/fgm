@@ -1,10 +1,10 @@
 [package]
 name = "fgm"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Figma CLI - Export assets, compare designs, extract tokens"
 authors = ["Dan Hart"]
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/danhart/fgm"
 keywords = ["figma", "cli", "design", "export"]
 categories = ["command-line-utilities", "development-tools"]
@@ -42,6 +42,9 @@ indicatif = "0.17"
 # Error handling
 anyhow = "1"
 thiserror = "2"
+
+# Date/time
+chrono = "0.4"
 
 # URL handling
 url = "2"

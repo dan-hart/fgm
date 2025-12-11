@@ -5,7 +5,12 @@ A fast, cross-platform command-line interface for Figma. Export assets, compare 
 ## Features
 
 - **Export** - Download PNG, SVG, PDF, JPG from any Figma file or node
+- **Platform Export** - Generate iOS (@1x, @2x, @3x), Android (mdpi-xxxhdpi), or Web (1x, 2x) asset sets
 - **Compare** - Pixel-diff designs against dev screenshots with threshold-based CI pass/fail
+- **Compare URL** - Export from Figma and compare against a screenshot in one command
+- **Snapshot & Diff** - Track design changes over time, compare versions
+- **Sync** - Declarative asset management from TOML manifest
+- **Component Mapping** - Link Figma components to code implementations, track coverage
 - **Tokens** - Extract colors and typography to JSON, CSS, Swift, or Kotlin
 - **Preview** - View Figma frames directly in terminal (iTerm2, Kitty, Sixel)
 - **Browse** - Navigate files, versions, and document tree structure
@@ -87,6 +92,15 @@ fgm export file abc123 --node "1:2" --format svg --scale 1 -o ./out/
 
 # Batch export from manifest
 fgm export batch manifest.toml
+
+# Export for iOS (generates @1x, @2x, @3x)
+fgm export file abc123 --node "1:2" --platform ios -o ./ios-assets/
+
+# Export for Android (generates drawable-mdpi through xxxhdpi)
+fgm export file abc123 --node "1:2" --platform android -o ./android-res/
+
+# Export for Web (generates 1x and @2x)
+fgm export file abc123 --node "1:2" --platform web -o ./web-assets/
 ```
 
 **Manifest file example (`manifest.toml`):**
@@ -136,6 +150,121 @@ fgm compare ./designs/ ./screenshots/ --batch --report report.json
     {"file": "header.png", "diff_percent": 12.3, "passed": false}
   ]
 }
+```
+
+### Compare URL (One-Step Comparison)
+
+Export from Figma and compare against a screenshot in a single command:
+
+```bash
+# Compare Figma URL directly against a screenshot
+fgm compare-url "https://www.figma.com/design/abc123/File?node-id=1-2" screenshot.png
+
+# Set threshold and generate diff image
+fgm compare-url "https://www.figma.com/design/abc123/File?node-id=1-2" screenshot.png \
+    --threshold 3 --output diff.png
+
+# Use different export scale
+fgm compare-url "https://www.figma.com/design/abc123/File?node-id=1-2" screenshot.png --scale 3
+```
+
+### Snapshot & Diff
+
+Track design changes over time:
+
+```bash
+# Create a snapshot of current design state
+fgm snapshot create abc123 --name "v1.0" -o .fgm-snapshots
+
+# Create snapshot of specific nodes
+fgm snapshot create abc123 --name "sprint-5" --node "1:2" --node "1:3"
+
+# List existing snapshots
+fgm snapshot list -d .fgm-snapshots
+
+# Compare two snapshots
+fgm snapshot diff v1.0 v2.0 -d .fgm-snapshots
+
+# Generate diff images for changed frames
+fgm snapshot diff v1.0 v2.0 -d .fgm-snapshots --output ./diffs/
+```
+
+### Sync (Declarative Asset Management)
+
+Manage assets declaratively from a TOML manifest:
+
+```bash
+# Sync assets from manifest
+fgm sync figma-assets.toml
+
+# Preview what would be synced
+fgm sync figma-assets.toml --dry-run
+
+# Force re-download all assets
+fgm sync figma-assets.toml --force
+```
+
+**Sync manifest example (`figma-assets.toml`):**
+
+```toml
+[project]
+name = "MyApp Assets"
+output_dir = "./assets"
+
+[assets.app-icon]
+figma = "https://www.figma.com/design/abc123/File?node-id=1-2"
+output = "icons/app-icon.png"
+scale = 2
+
+[assets.logo]
+figma = "abc123"
+node = "1:5"
+output = "images/logo.svg"
+format = "svg"
+
+[assets.button-primary]
+figma = "abc123"
+node = "1:10"
+output = "components/button.png"
+```
+
+### Component Mapping
+
+Link Figma components to your code and track implementation coverage:
+
+```bash
+# Initialize a component map from a Figma file
+fgm map init abc123 -o figma-components.toml
+
+# Check implementation coverage
+fgm map coverage -m figma-components.toml
+
+# Link a component to its code implementation
+fgm map link "Button/Primary" ./src/components/Button.tsx -m figma-components.toml
+
+# Update map with latest components from Figma
+fgm map update -m figma-components.toml
+```
+
+**Coverage output:**
+
+```
+Component Coverage: Design System
+  Last synced: 2024-01-15T10:30:00Z
+
+  [████████████████░░░░░░░░░░░░░░] 52%
+
+Status:
+  ✓ Implemented (26/50)
+  → In Progress (5)
+  ! Needs Update (2)
+  ○ Not Started (17)
+
+Pending:
+  ! Card/Elevated (needs update)
+  ○ Dialog/Confirmation
+  ○ Toast/Success
+  ... and 16 more
 ```
 
 ### Extract Design Tokens
@@ -270,7 +399,9 @@ RUST_LOG=debug cargo run -- files get abc123
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+See [LICENSE](LICENSE) for the full license text.
 
 ## Credits
 

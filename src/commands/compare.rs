@@ -46,7 +46,7 @@ async fn single_compare(
     println!("  Dimensions: {}x{} vs {}x{}", w1, h1, w2, h2);
 
     // Calculate pixel diff
-    let result = calculate_diff(&img1, &img2)?;
+    let result = calculate_diff_internal(&img1, &img2)?;
 
     let diff_percent = result.diff_percent;
     let passed = diff_percent <= threshold;
@@ -67,7 +67,7 @@ async fn single_compare(
 
     // Generate diff image if output path specified
     if let Some(output) = output_path {
-        let diff_img = generate_diff_image(&img1, &img2)?;
+        let diff_img = generate_diff_image(&img1, &img2);
         diff_img.save(output)?;
         println!("  Diff image: {}", output.display().to_string().cyan());
     }
@@ -121,7 +121,7 @@ async fn batch_compare(
         let img1 = image::open(&path1)?;
         let img2 = image::open(&path2)?;
 
-        let diff_result = calculate_diff(&img1, &img2)?;
+        let diff_result = calculate_diff_internal(&img1, &img2)?;
         let passes = diff_result.diff_percent <= threshold;
 
         if passes {
@@ -136,7 +136,7 @@ async fn batch_compare(
 
         // Generate diff image
         if let Some(output) = output_dir {
-            let diff_img = generate_diff_image(&img1, &img2)?;
+            let diff_img = generate_diff_image(&img1, &img2);
             let diff_filename = format!("diff-{}", filename.to_string_lossy());
             diff_img.save(output.join(&diff_filename))?;
         }
@@ -180,7 +180,84 @@ struct DiffResult {
     dimensions_match: bool,
 }
 
-fn calculate_diff(img1: &image::DynamicImage, img2: &image::DynamicImage) -> Result<DiffResult> {
+/// Calculate the percentage of pixels that differ between two images
+/// Returns a value from 0.0 to 100.0
+pub fn calculate_diff(img1: &image::DynamicImage, img2: &image::DynamicImage) -> f32 {
+    let (w1, h1) = img1.dimensions();
+    let (w2, h2) = img2.dimensions();
+
+    // Use the smaller dimensions for comparison
+    let width = w1.min(w2);
+    let height = h1.min(h2);
+    let total_pixels = (width * height) as f64;
+
+    if total_pixels == 0.0 {
+        return 100.0;
+    }
+
+    let mut diff_pixels = 0u64;
+
+    for y in 0..height {
+        for x in 0..width {
+            let p1 = img1.get_pixel(x, y);
+            let p2 = img2.get_pixel(x, y);
+
+            if !pixels_similar(&p1, &p2, 10) {
+                diff_pixels += 1;
+            }
+        }
+    }
+
+    (diff_pixels as f64 / total_pixels * 100.0) as f32
+}
+
+/// Generate a visual diff image highlighting differences in red
+pub fn generate_diff_image(
+    img1: &image::DynamicImage,
+    img2: &image::DynamicImage,
+) -> image::RgbaImage {
+    let (w1, h1) = img1.dimensions();
+    let (w2, h2) = img2.dimensions();
+
+    let width = w1.max(w2);
+    let height = h1.max(h2);
+
+    let mut diff_img = image::RgbaImage::new(width, height);
+
+    for y in 0..height {
+        for x in 0..width {
+            let in_bounds1 = x < w1 && y < h1;
+            let in_bounds2 = x < w2 && y < h2;
+
+            let pixel = if in_bounds1 && in_bounds2 {
+                let p1 = img1.get_pixel(x, y);
+                let p2 = img2.get_pixel(x, y);
+
+                if pixels_similar(&p1, &p2, 10) {
+                    // Same - show dimmed original
+                    Rgba([p1[0] / 2, p1[1] / 2, p1[2] / 2, 255])
+                } else {
+                    // Different - highlight in red
+                    Rgba([255, 0, 0, 200])
+                }
+            } else if in_bounds1 {
+                // Only in image 1 - show in blue
+                Rgba([0, 0, 255, 200])
+            } else if in_bounds2 {
+                // Only in image 2 - show in green
+                Rgba([0, 255, 0, 200])
+            } else {
+                Rgba([0, 0, 0, 0])
+            };
+
+            diff_img.put_pixel(x, y, pixel);
+        }
+    }
+
+    diff_img
+}
+
+fn calculate_diff_internal(img1: &image::DynamicImage, img2: &image::DynamicImage) -> Result<DiffResult> {
     let (w1, h1) = img1.dimensions();
     let (w2, h2) = img2.dimensions();
 
@@ -222,51 +299,6 @@ fn pixels_similar(p1: &Rgba<u8>, p2: &Rgba<u8>, tolerance: u8) -> bool {
     let diff_b = (p1[2] as i16 - p2[2] as i16).unsigned_abs() as u8;
 
     diff_r <= tolerance && diff_g <= tolerance && diff_b <= tolerance
-}
-
-fn generate_diff_image(
-    img1: &image::DynamicImage,
-    img2: &image::DynamicImage,
-) -> Result<image::RgbaImage> {
-    let (w1, h1) = img1.dimensions();
-    let (w2, h2) = img2.dimensions();
-
-    let width = w1.max(w2);
-    let height = h1.max(h2);
-
-    let mut diff_img = image::RgbaImage::new(width, height);
-
-    for y in 0..height {
-        for x in 0..width {
-            let in_bounds1 = x < w1 && y < h1;
-            let in_bounds2 = x < w2 && y < h2;
-
-            let pixel = if in_bounds1 && in_bounds2 {
-                let p1 = img1.get_pixel(x, y);
-                let p2 = img2.get_pixel(x, y);
-
-                if pixels_similar(&p1, &p2, 10) {
-                    // Same - show dimmed original
-                    Rgba([p1[0] / 2, p1[1] / 2, p1[2] / 2, 255])
-                } else {
-                    // Different - highlight in red
-                    Rgba([255, 0, 0, 200])
-                }
-            } else if in_bounds1 {
-                // Only in image 1 - show in blue
-                Rgba([0, 0, 255, 200])
-            } else if in_bounds2 {
-                // Only in image 2 - show in green
-                Rgba([0, 255, 0, 200])
-            } else {
-                Rgba([0, 0, 0, 0])
-            };
-
-            diff_img.put_pixel(x, y, pixel);
-        }
-    }
-
-    Ok(diff_img)
 }
 
 fn is_image(path: &Path) -> bool {
