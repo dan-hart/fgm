@@ -135,6 +135,12 @@ MANIFEST FORMAT:
         #[command(subcommand)]
         command: MapCommands,
     },
+
+    /// Manage API response cache (warmup, status, clear)
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommands,
+    },
 }
 
 // Auth subcommands
@@ -654,4 +660,51 @@ pub enum Platform {
     Android,
     /// Web (1x, 2x)
     Web,
+}
+
+// Cache subcommands
+#[derive(Subcommand)]
+pub enum CacheCommands {
+    /// Prefetch all data for a Figma file (warm the cache)
+    #[command(long_about = "Warm the cache by fetching all data for a Figma file upfront.
+
+This downloads file metadata, version history, and optionally image URLs.
+Run this before batch operations to minimize API calls and avoid rate limits.
+
+Cache is stored in ~/.cache/fgm/ and persists between sessions.")]
+    #[command(after_help = "EXAMPLES:
+    fgm cache warmup abc123
+    fgm cache warmup \"https://figma.com/design/abc123/File\"
+    fgm cache warmup abc123 --include-images")]
+    Warmup {
+        /// Figma file key or URL
+        #[arg(help = "File key (abc123) or Figma URL")]
+        file_key_or_url: String,
+        /// Also prefetch image export URLs for all frames
+        #[arg(long, help = "Include image URLs in cache warmup (takes longer)")]
+        include_images: bool,
+    },
+
+    /// Show cache statistics
+    #[command(long_about = "Display information about the current cache state.
+
+Shows memory and disk cache entry counts, size, and location.")]
+    Status,
+
+    /// Clear cached data
+    #[command(long_about = "Clear cached Figma API responses.
+
+Use --all to clear the entire cache, or --file to clear data for a specific file.
+Clearing cache forces fresh API calls on next operation.")]
+    #[command(after_help = "EXAMPLES:
+    fgm cache clear --all
+    fgm cache clear --file abc123")]
+    Clear {
+        /// Clear entire cache
+        #[arg(long, help = "Clear all cached data")]
+        all: bool,
+        /// Clear cache for specific file key
+        #[arg(long, help = "Clear cache for specific file")]
+        file: Option<String>,
+    },
 }

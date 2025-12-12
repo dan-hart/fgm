@@ -10,7 +10,7 @@ pub struct User {
 }
 
 /// File metadata returned by /v1/files/:key
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
     pub name: String,
@@ -23,7 +23,7 @@ pub struct File {
 }
 
 /// Document structure
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Document {
     pub id: String,
     pub name: String,
@@ -33,7 +33,7 @@ pub struct Document {
 }
 
 /// Generic node in the Figma document tree
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Node {
     pub id: String,
@@ -48,7 +48,7 @@ pub struct Node {
 }
 
 /// Bounding box for a node
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BoundingBox {
     pub x: f64,
     pub y: f64,
@@ -57,7 +57,7 @@ pub struct BoundingBox {
 }
 
 /// Paint (fill or stroke)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Paint {
     #[serde(rename = "type")]
@@ -97,7 +97,7 @@ impl Color {
 }
 
 /// Typography style
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeStyle {
     pub font_family: Option<String>,
@@ -108,7 +108,7 @@ pub struct TypeStyle {
 }
 
 /// Published component
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Component {
     pub key: String,
@@ -117,7 +117,7 @@ pub struct Component {
 }
 
 /// Style definition
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Style {
     pub key: String,
@@ -127,7 +127,7 @@ pub struct Style {
 }
 
 /// Image export response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ImageResponse {
     #[serde(default)]
     pub images: std::collections::HashMap<String, Option<String>>,
@@ -136,20 +136,20 @@ pub struct ImageResponse {
 }
 
 /// Project info
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Project {
     pub id: String,
     pub name: String,
 }
 
 /// Projects list response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectsResponse {
     pub projects: Vec<Project>,
 }
 
 /// Project file
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFile {
     pub key: String,
@@ -159,13 +159,13 @@ pub struct ProjectFile {
 }
 
 /// Project files response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectFilesResponse {
     pub files: Vec<ProjectFile>,
 }
 
 /// Version info
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Version {
     pub id: String,
     pub created_at: String,
@@ -174,20 +174,20 @@ pub struct Version {
     pub user: Option<VersionUser>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VersionUser {
     pub handle: String,
     pub img_url: Option<String>,
 }
 
 /// Versions response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VersionsResponse {
     pub versions: Vec<Version>,
 }
 
 /// Team component from published library
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamComponent {
     pub key: String,
     pub name: String,
@@ -200,7 +200,7 @@ pub struct TeamComponent {
 }
 
 /// Team components response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamComponentsResponse {
     pub status: Option<u16>,
     pub error: Option<bool>,
@@ -209,14 +209,14 @@ pub struct TeamComponentsResponse {
     pub meta: Option<TeamComponentsMeta>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamComponentsMeta {
     #[serde(default)]
     pub components: Vec<TeamComponent>,
 }
 
 /// Team style from published library
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamStyle {
     pub key: String,
     pub name: String,
@@ -228,7 +228,7 @@ pub struct TeamStyle {
 }
 
 /// Team styles response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamStylesResponse {
     pub status: Option<u16>,
     pub error: Option<bool>,
@@ -237,14 +237,14 @@ pub struct TeamStylesResponse {
     pub meta: Option<TeamStylesMeta>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TeamStylesMeta {
     #[serde(default)]
     pub styles: Vec<TeamStyle>,
 }
 
 /// Component detail response
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ComponentDetailResponse {
     pub status: Option<u16>,
     pub error: Option<bool>,
@@ -253,7 +253,7 @@ pub struct ComponentDetailResponse {
     pub meta: Option<ComponentDetail>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ComponentDetail {
     pub key: String,
     pub name: String,
@@ -266,7 +266,7 @@ pub struct ComponentDetail {
     pub containing_frame: Option<ContainingFrame>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ContainingFrame {
     pub name: Option<String>,
     pub node_id: Option<String>,

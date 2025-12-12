@@ -25,5 +25,6 @@ async fn main() -> Result<()> {
         Commands::Snapshot { command } => commands::snapshot::run(command).await,
         Commands::Sync(args) => commands::sync::run(args).await,
         Commands::Map { command } => commands::map::run(command).await,
+        Commands::Cache { command } => commands::cache::run(command).await,
     }
 }
