@@ -1,11 +1,11 @@
 [package]
 name = "fgm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Figma CLI - Export assets, compare designs, extract tokens"
 authors = ["Dan Hart"]
 license = "GPL-3.0-or-later"
-repository = "https://github.com/danhart/fgm"
+repository = "https://github.com/dan-hart/fgm"
 keywords = ["figma", "cli", "design", "export"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -30,7 +30,7 @@ image = "0.25"
 viuer = "0.7"
 
 # Auth/Config (cross-platform)
-keyring = "3"
+keyring = { version = "3", features = ["apple-native"] }
 directories = "5"
 toml = "0.8"
 

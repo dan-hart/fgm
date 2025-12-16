@@ -9,6 +9,7 @@ env::var\("FIGMA_TOKEN"\)
 const USERNAME.*figma_token
 FIGMA_TOKEN
 FIGMA_TOKEN.*env
+figma_token
 
 # Documentation examples with placeholder values
 YOUR_FIGMA_TOKEN

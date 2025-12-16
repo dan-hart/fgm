@@ -25,7 +25,7 @@ COMMON WORKFLOWS:
     fgm compare-url <URL> screenshot.png        Compare Figma to screenshot
     fgm tokens export <key> --format css        Export design tokens to CSS
 
-Learn more: https://github.com/danhart/fgm")]
+Learn more: https://github.com/dan-hart/fgm")]
 #[command(propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -170,6 +170,17 @@ visit: https://www.figma.com/settings → Personal access tokens")]
 Checks for a valid token and tests it against the Figma API.
 Shows which token source is being used (env var, keychain, or config).")]
     Status,
+
+    /// Debug authentication issues (keychain, env vars, config)
+    #[command(long_about = "Diagnose authentication problems.
+
+Tests each token source individually and reports detailed information:
+  - Environment variable (FIGMA_TOKEN)
+  - System keychain status and accessibility
+  - Config file token storage
+
+Use this when 'fgm auth login' succeeds but 'fgm auth status' fails.")]
+    Debug,
 }
 
 // Files subcommands

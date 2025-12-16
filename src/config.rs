@@ -7,6 +7,10 @@ use std::path::PathBuf;
 /// Application configuration
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
+    /// Figma token (fallback when keychain unavailable)
+    /// WARNING: Stored in plaintext - prefer keychain storage
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figma_token: Option<String>,
     #[serde(default)]
     pub defaults: DefaultsConfig,
     #[serde(default)]
@@ -101,5 +105,26 @@ impl Config {
         let content = toml::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Get token from config file (fallback storage)
+    pub fn get_token(&self) -> Option<&str> {
+        self.figma_token.as_deref()
+    }
+
+    /// Store token in config file (fallback storage)
+    /// WARNING: This stores the token in plaintext
+    pub fn set_token(&mut self, token: &str) {
+        self.figma_token = Some(token.to_string());
+    }
+
+    /// Remove token from config file
+    pub fn remove_token(&mut self) {
+        self.figma_token = None;
+    }
+
+    /// Check if config file has a token
+    pub fn has_token(&self) -> bool {
+        self.figma_token.is_some()
     }
 }
