@@ -1,6 +1,7 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::SyncArgs;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use serde::Deserialize;
@@ -12,10 +13,10 @@ pub async fn run(args: SyncArgs) -> Result<()> {
     let content = fs::read_to_string(&args.manifest)?;
     let manifest: SyncManifest = toml::from_str(&content)?;
 
-    println!("{}", format!("Asset Sync: {}", manifest.project.name).bold());
+    output::print_status(&format!("Asset Sync: {}", manifest.project.name).bold().to_string());
 
     if args.dry_run {
-        println!("{}", "(Dry run - no files will be modified)".yellow());
+        output::print_status(&"(Dry run - no files will be modified)".yellow().to_string());
     }
 
     let token = get_token()?;
@@ -27,8 +28,8 @@ pub async fn run(args: SyncArgs) -> Result<()> {
     let mut errors = 0;
 
     for (name, asset) in &manifest.assets {
-        println!();
-        println!("  {} {}", "→".cyan(), name.bold());
+        output::print_status("");
+        output::print_status(&format!("  {} {}", "→".cyan(), name.bold()));
 
         // Parse Figma URL/key
         let parsed = FigmaUrl::parse(&asset.figma)?;
@@ -37,7 +38,7 @@ pub async fn run(args: SyncArgs) -> Result<()> {
         let node_id = match node_id {
             Some(id) => id,
             None => {
-                println!("    {}: Missing node ID", "skip".yellow());
+                output::print_status(&format!("    {}: Missing node ID", "skip".yellow()));
                 skipped += 1;
                 continue;
             }
@@ -48,28 +49,45 @@ pub async fn run(args: SyncArgs) -> Result<()> {
 
         // Check if file exists and force flag
         if output_path.exists() && !args.force && !args.dry_run {
-            println!("    {}: {} (use --force to overwrite)", "exists".dimmed(), output_path.display());
+            output::print_status(&format!(
+                "    {}: {} (use --force to overwrite)",
+                "exists".dimmed(),
+                output_path.display()
+            ));
             skipped += 1;
             continue;
         }
 
         if args.dry_run {
-            println!("    would export {} → {}", node_id, output_path.display());
+            output::print_status(&format!(
+                "    would export {} → {}",
+                node_id,
+                output_path.display()
+            ));
             synced += 1;
             continue;
         }
 
         // Export the asset
         let format = asset.format.as_deref().unwrap_or("png");
-        let scale = asset.scale.unwrap_or(2);
+        let scale = asset.scale.unwrap_or(2.0);
+        if !(1.0..=4.0).contains(&scale) {
+            output::print_status(&format!(
+                "    {}: Scale {} is out of range (1-4)",
+                "error".red(),
+                scale
+            ));
+            errors += 1;
+            continue;
+        }
 
         match export_asset(&client, &parsed.file_key, &node_id, format, scale, &output_path).await {
             Ok(_) => {
-                println!("    {} {}", "✓".green(), output_path.display());
+                output::print_status(&format!("    {} {}", "✓".green(), output_path.display()));
                 synced += 1;
             }
             Err(e) => {
-                println!("    {}: {}", "error".red(), e);
+                output::print_status(&format!("    {}: {}", "error".red(), e));
                 errors += 1;
             }
         }
@@ -79,17 +97,20 @@ pub async fn run(args: SyncArgs) -> Result<()> {
     }
 
     // Summary
-    println!();
-    println!("{}", "Summary:".bold());
-    println!("  Synced: {} | Skipped: {} | Errors: {}", synced, skipped, errors);
+    output::print_status("");
+    output::print_status(&"Summary:".bold().to_string());
+    output::print_status(&format!(
+        "  Synced: {} | Skipped: {} | Errors: {}",
+        synced, skipped, errors
+    ));
 
     if args.dry_run {
-        println!();
-        println!("{}", "Run without --dry-run to apply changes".yellow());
+        output::print_status("");
+        output::print_status(&"Run without --dry-run to apply changes".yellow().to_string());
     }
 
     if errors > 0 {
-        std::process::exit(1);
+        anyhow::bail!("One or more assets failed to sync");
     }
 
     Ok(())
@@ -100,7 +121,7 @@ async fn export_asset(
     file_key: &str,
     node_id: &str,
     format: &str,
-    scale: u8,
+    scale: f32,
     output: &Path,
 ) -> Result<()> {
     // Ensure parent directory exists
@@ -108,7 +129,9 @@ async fn export_asset(
         fs::create_dir_all(parent)?;
     }
 
-    let images = client.export_images(file_key, &[node_id.to_string()], format, scale).await?;
+    let images = client
+        .export_images(file_key, &[node_id.to_string()], format, scale)
+        .await?;
 
     if let Some(err) = &images.err {
         anyhow::bail!("Figma API error: {}", err);
@@ -171,5 +194,5 @@ struct AssetDefinition {
     format: Option<String>,
     /// Export scale (1-4)
     #[serde(default)]
-    scale: Option<u8>,
+    scale: Option<f32>,
 }

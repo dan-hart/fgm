@@ -1,6 +1,7 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::MapCommands;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -80,7 +81,7 @@ async fn init(file_key_or_url: &str, output: &Path) -> Result<()> {
     let parsed = FigmaUrl::parse(file_key_or_url)?;
     let file_key = &parsed.file_key;
 
-    println!("{}", "Fetching Figma file...".bold());
+    output::print_status(&"Fetching Figma file...".bold().to_string());
 
     let file = client.get_file(file_key).await?;
 
@@ -120,15 +121,15 @@ async fn init(file_key_or_url: &str, output: &Path) -> Result<()> {
     let toml_content = toml::to_string_pretty(&map)?;
     fs::write(output, &toml_content)?;
 
-    println!();
-    println!("{}", format!("Created component map: {}", output.display()).green());
-    println!("  File: {} ({})", file.name, file_key);
-    println!("  Components: {}", map.components.len());
-    println!();
-    println!("{}", "Next steps:".bold());
-    println!("  1. Review the generated file");
-    println!("  2. Link components to code: fgm map link <component> <code-path>");
-    println!("  3. Check coverage: fgm map coverage");
+    output::print_status("");
+    output::print_success(&format!("Created component map: {}", output.display()));
+    output::print_status(&format!("  File: {} ({})", file.name, file_key));
+    output::print_status(&format!("  Components: {}", map.components.len()));
+    output::print_status("");
+    output::print_status(&"Next steps:".bold().to_string());
+    output::print_status("  1. Review the generated file");
+    output::print_status("  2. Link components to code: fgm map link <component> <code-path>");
+    output::print_status("  3. Check coverage: fgm map coverage");
 
     Ok(())
 }
@@ -138,9 +139,9 @@ fn coverage(map_path: &Path) -> Result<()> {
     let content = fs::read_to_string(map_path)?;
     let map: ComponentMap = toml::from_str(&content)?;
 
-    println!("{}", format!("Component Coverage: {}", map.figma.file_name).bold());
-    println!("  Last synced: {}", map.figma.last_sync);
-    println!();
+    output::print_status(&format!("Component Coverage: {}", map.figma.file_name).bold().to_string());
+    output::print_status(&format!("  Last synced: {}", map.figma.last_sync));
+    output::print_status("");
 
     let total = map.components.len();
     let implemented: Vec<_> = map.components.values()
@@ -161,32 +162,49 @@ fn coverage(map_path: &Path) -> Result<()> {
     let bar_width = 30;
     let filled = (pct * bar_width) / 100;
     let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
-    println!("  [{}] {}%", bar.green(), pct);
-    println!();
+    output::print_status(&format!("  [{}] {}%", bar.green(), pct));
+    output::print_status("");
 
     // Summary
-    println!("{}", "Status:".bold());
-    println!("  {} Implemented ({}/{})", "✓".green(), implemented.len(), total);
-    println!("  {} In Progress ({})", "→".yellow(), in_progress.len());
-    println!("  {} Needs Update ({})", "!".red(), needs_update.len());
-    println!("  {} Not Started ({})", "○".dimmed(), not_started.len());
+    output::print_status(&"Status:".bold().to_string());
+    output::print_status(&format!(
+        "  {} Implemented ({}/{})",
+        "✓".green(),
+        implemented.len(),
+        total
+    ));
+    output::print_status(&format!(
+        "  {} In Progress ({})",
+        "→".yellow(),
+        in_progress.len()
+    ));
+    output::print_status(&format!(
+        "  {} Needs Update ({})",
+        "!".red(),
+        needs_update.len()
+    ));
+    output::print_status(&format!(
+        "  {} Not Started ({})",
+        "○".dimmed(),
+        not_started.len()
+    ));
 
     // List non-implemented components
     if !not_started.is_empty() || !needs_update.is_empty() {
-        println!();
-        println!("{}", "Pending:".bold());
+        output::print_status("");
+        output::print_status(&"Pending:".bold().to_string());
 
         for comp in needs_update.iter().chain(not_started.iter()).take(10) {
             let status_icon = match comp.status {
                 ComponentStatus::NeedsUpdate => "!".red(),
                 _ => "○".dimmed(),
             };
-            println!("  {} {}", status_icon, comp.figma_name);
+            output::print_status(&format!("  {} {}", status_icon, comp.figma_name));
         }
 
         let remaining = not_started.len() + needs_update.len();
         if remaining > 10 {
-            println!("  ... and {} more", remaining - 10);
+            output::print_status(&format!("  ... and {} more", remaining - 10));
         }
     }
 
@@ -201,10 +219,10 @@ fn coverage(map_path: &Path) -> Result<()> {
     }
 
     if !broken_links.is_empty() {
-        println!();
-        println!("{}", "⚠ Broken Links:".yellow().bold());
+        output::print_status("");
+        output::print_status(&"⚠ Broken Links:".yellow().bold().to_string());
         for (name, path) in broken_links {
-            println!("  {} → {}", name, path.red());
+            output::print_status(&format!("  {} → {}", name, path.red()));
         }
     }
 
@@ -219,7 +237,7 @@ async fn update(map_path: &Path) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
 
-    println!("{}", "Updating from Figma...".bold());
+    output::print_status(&"Updating from Figma...".bold().to_string());
 
     let file = client.get_file(&map.figma.file_key).await?;
 
@@ -257,9 +275,9 @@ async fn update(map_path: &Path) -> Result<()> {
     let toml_content = toml::to_string_pretty(&map)?;
     fs::write(map_path, &toml_content)?;
 
-    println!("{}", "Updated!".green());
-    println!("  Added: {}", added);
-    println!("  Potentially removed: {}", removed);
+    output::print_success("Updated!");
+    output::print_status(&format!("  Added: {}", added));
+    output::print_status(&format!("  Potentially removed: {}", removed));
 
     Ok(())
 }
@@ -280,7 +298,10 @@ fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
 
     // Verify code path exists
     if !code_path.exists() {
-        println!("{}", format!("Warning: {} does not exist yet", code_path.display()).yellow());
+        output::print_warning(&format!(
+            "{} does not exist yet",
+            code_path.display()
+        ));
     }
 
     // Update the entry
@@ -288,9 +309,9 @@ fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
         entry.code_path = Some(code_path.to_string_lossy().to_string());
         entry.status = ComponentStatus::Implemented;
 
-        println!("{}", "Linked!".green());
-        println!("  Component: {}", entry.figma_name);
-        println!("  Code: {}", code_path.display());
+        output::print_success("Linked!");
+        output::print_status(&format!("  Component: {}", entry.figma_name));
+        output::print_status(&format!("  Code: {}", code_path.display()));
     }
 
     let toml_content = toml::to_string_pretty(&map)?;

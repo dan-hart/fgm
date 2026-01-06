@@ -1,6 +1,8 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::SnapshotCommands;
+use crate::config::Config;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -39,6 +41,10 @@ struct NodeSnapshot {
 async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Path) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
+    let config = Config::load().unwrap_or_default();
+    if !(1.0..=4.0).contains(&config.export.default_scale) {
+        anyhow::bail!("Scale must be between 1 and 4");
+    }
 
     let parsed = FigmaUrl::parse(file_key_or_url)?;
     let file_key = &parsed.file_key;
@@ -55,7 +61,7 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
     let snapshot_dir = output.join(name);
     fs::create_dir_all(&snapshot_dir)?;
 
-    println!("{}", format!("Creating snapshot '{}'...", name).bold());
+    output::print_status(&format!("Creating snapshot '{}'...", name).bold().to_string());
 
     // Get file info to find frames
     let file = client.get_file(file_key).await?;
@@ -72,18 +78,18 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
     };
 
     if ids_to_export.is_empty() {
-        println!("{}", "No frames found to snapshot".yellow());
-        return Ok(());
+        anyhow::bail!("No frames found to snapshot");
     }
 
-    println!("  Exporting {} nodes...", ids_to_export.len());
+    output::print_status(&format!("  Exporting {} nodes...", ids_to_export.len()));
 
     // Export images at 2x for comparison
-    let images = client.export_images(file_key, &ids_to_export, "png", 2).await?;
+    let images = client
+        .export_images(file_key, &ids_to_export, "png", config.export.default_scale)
+        .await?;
 
     if let Some(err) = &images.err {
-        println!("{}: {}", "API Error".red(), err);
-        return Ok(());
+        anyhow::bail!("API Error: {}", err);
     }
 
     // Build node name lookup
@@ -101,7 +107,7 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
             fs::write(&filepath, bytes)?;
 
             let node_name = name_lookup.get(&node_id).cloned().unwrap_or_else(|| node_id.clone());
-            println!("  {} {}", "✓".green(), node_name);
+            output::print_status(&format!("  {} {}", "✓".green(), node_name));
 
             snapshots.push(NodeSnapshot {
                 id: node_id,
@@ -123,18 +129,25 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
     let meta_json = serde_json::to_string_pretty(&meta)?;
     fs::write(&meta_path, meta_json)?;
 
-    println!();
-    println!("{}", format!("Snapshot '{}' created at {}", name, snapshot_dir.display()).green());
+    output::print_status("");
+    output::print_success(&format!(
+        "Snapshot '{}' created at {}",
+        name,
+        snapshot_dir.display()
+    ));
     Ok(())
 }
 
 fn list(dir: &Path) -> Result<()> {
     if !dir.exists() {
-        println!("{}", format!("No snapshots directory at {}", dir.display()).yellow());
+        output::print_warning(&format!(
+            "No snapshots directory at {}",
+            dir.display()
+        ));
         return Ok(());
     }
 
-    println!("{}", "Snapshots:".bold());
+    output::print_status(&"Snapshots:".bold().to_string());
 
     let mut found = false;
     for entry in fs::read_dir(dir)? {
@@ -147,17 +160,21 @@ fn list(dir: &Path) -> Result<()> {
                 let content = fs::read_to_string(&meta_path)?;
                 let meta: SnapshotMeta = serde_json::from_str(&content)?;
 
-                println!();
-                println!("  {} ({})", meta.name.cyan(), meta.created_at.dimmed());
-                println!("    File: {}", meta.file_key);
-                println!("    Nodes: {}", meta.nodes.len());
+                output::print_status("");
+                output::print_status(&format!(
+                    "  {} ({})",
+                    meta.name.cyan(),
+                    meta.created_at.dimmed()
+                ));
+                output::print_status(&format!("    File: {}", meta.file_key));
+                output::print_status(&format!("    Nodes: {}", meta.nodes.len()));
                 found = true;
             }
         }
     }
 
     if !found {
-        println!("{}", "  No snapshots found".yellow());
+        output::print_warning("No snapshots found");
     }
 
     Ok(())
@@ -178,10 +195,10 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
     let from_meta: SnapshotMeta = serde_json::from_str(&fs::read_to_string(from_dir.join("snapshot.json"))?)?;
     let to_meta: SnapshotMeta = serde_json::from_str(&fs::read_to_string(to_dir.join("snapshot.json"))?)?;
 
-    println!("{}", format!("Comparing '{}' → '{}'", from, to).bold());
-    println!("  From: {} ({})", from_meta.name, from_meta.created_at);
-    println!("  To:   {} ({})", to_meta.name, to_meta.created_at);
-    println!();
+    output::print_status(&format!("Comparing '{}' → '{}'", from, to).bold().to_string());
+    output::print_status(&format!("  From: {} ({})", from_meta.name, from_meta.created_at));
+    output::print_status(&format!("  To:   {} ({})", to_meta.name, to_meta.created_at));
+    output::print_status("");
 
     // Create output directory if specified
     let diff_output = if let Some(out) = output {
@@ -212,25 +229,35 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
             let from_img = image::open(&from_path)?;
             let to_img = image::open(&to_path)?;
 
-            let diff_percent = crate::commands::compare::calculate_diff(&from_img, &to_img);
+            let diff_percent = crate::commands::compare::calculate_diff(&from_img, &to_img, 10);
 
             if diff_percent > 0.1 {
                 changed += 1;
-                println!("  {} {} ({:.1}% different)", "~".yellow(), from_node.name, diff_percent);
+                output::print_status(&format!(
+                    "  {} {} ({:.1}% different)",
+                    "~".yellow(),
+                    from_node.name,
+                    diff_percent
+                ));
 
                 // Generate diff image if output specified
                 if let Some(out_dir) = diff_output {
-                    let diff_img = crate::commands::compare::generate_diff_image(&from_img, &to_img);
+                    let diff_img =
+                        crate::commands::compare::generate_diff_image(&from_img, &to_img, 10);
                     let diff_path = out_dir.join(format!("{}-diff.png", from_node.id.replace(':', "-")));
                     diff_img.save(&diff_path)?;
                 }
             } else {
-                println!("  {} {} (unchanged)", "=".dimmed(), from_node.name.dimmed());
+                output::print_status(&format!(
+                    "  {} {} (unchanged)",
+                    "=".dimmed(),
+                    from_node.name.dimmed()
+                ));
             }
         } else {
             // Node was removed
             removed += 1;
-            println!("  {} {} (removed)", "-".red(), from_node.name);
+            output::print_status(&format!("  {} {} (removed)", "-".red(), from_node.name));
         }
     }
 
@@ -239,17 +266,19 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
         if !from_meta.nodes.iter().any(|n| n.id == to_node.id) {
             added += 1;
             total += 1;
-            println!("  {} {} (added)", "+".green(), to_node.name);
+            output::print_status(&format!("  {} {} (added)", "+".green(), to_node.name));
         }
     }
 
-    println!();
-    println!("{}", "Summary:".bold());
-    println!("  Total: {} | Changed: {} | Added: {} | Removed: {}",
-             total, changed, added, removed);
+    output::print_status("");
+    output::print_status(&"Summary:".bold().to_string());
+    output::print_status(&format!(
+        "  Total: {} | Changed: {} | Added: {} | Removed: {}",
+        total, changed, added, removed
+    ));
 
     if let Some(out_dir) = diff_output {
-        println!("  Diff images saved to: {}", out_dir.display());
+        output::print_status(&format!("  Diff images saved to: {}", out_dir.display()));
     }
 
     Ok(())

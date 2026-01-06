@@ -155,4 +155,11 @@ mod tests {
         assert_eq!(url.file_key, "abc123");
         assert_eq!(url.node_id, Some("1:234".to_string()));
     }
+
+    #[test]
+    fn test_parse_proto_url() {
+        let url = FigmaUrl::parse("https://www.figma.com/proto/abc123/Proto?node-id=5-6").unwrap();
+        assert_eq!(url.file_key, "abc123");
+        assert_eq!(url.node_id, Some("5:6".to_string()));
+    }
 }

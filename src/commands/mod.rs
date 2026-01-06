@@ -3,6 +3,7 @@ pub mod cache;
 pub mod compare;
 pub mod compare_url;
 pub mod components;
+pub mod config;
 pub mod export;
 pub mod files;
 pub mod map;

@@ -45,8 +45,11 @@ cp target/release/fgm ~/.local/bin/
 # 1. Set your Figma token
 export FIGMA_TOKEN="figd_your_token_here"
 
-# Or store it securely in your keychain
+# Or store it in the config file (default)
 fgm auth login
+
+# Or store it securely in your keychain (opt-in)
+fgm auth login --keychain
 
 # 2. Get file info from a Figma URL
 fgm files get "https://www.figma.com/design/abc123/MyFile"
@@ -63,12 +66,18 @@ https://www.figma.com/developers/api#access-tokens
 ### Token Storage (Priority Order)
 
 1. `FIGMA_TOKEN` environment variable
-2. System keychain (macOS Keychain / Linux Secret Service)
-3. Config file `~/.config/fgm/config.toml`
+2. Config file `~/.config/fgm/config.toml`
+3. System keychain (macOS Keychain / Linux Secret Service)
 
 ```bash
-# Store token in keychain
+# Store token in config file (default)
 fgm auth login
+
+# Store token in keychain (opt-in)
+fgm auth login --keychain
+
+# Disable keychain access (avoids prompts)
+fgm --no-keychain auth status
 
 # Check authentication status
 fgm auth status
@@ -360,9 +369,11 @@ fgm export file abc123 --node "1:2"
 
 ## Configuration
 
-Optional config file at `~/.config/fgm/config.toml`:
+Optional config file at `~/.config/fgm/config.toml` (also used for token storage by default):
 
 ```toml
+figma_token = "figd_..."
+
 [defaults]
 team_id = "123456789"
 output_format = "table"
@@ -371,6 +382,14 @@ output_format = "table"
 default_format = "png"
 default_scale = 2
 output_dir = "~/Downloads/figma"
+```
+
+```bash
+# View or update config values
+fgm config path
+fgm config show
+fgm config get defaults.output_format
+fgm config set defaults.output_format table
 ```
 
 ## Rate Limits
@@ -384,7 +403,7 @@ For large exports, consider using `--all-frames` with a smaller file or exportin
 
 ## Security
 
-- Tokens are stored securely in your system keychain
+- Tokens are stored in the config file by default (plaintext) or optionally in your system keychain
 - `git-secrets` hooks prevent accidental credential commits
 - `.gitignore` patterns block common credential files
 

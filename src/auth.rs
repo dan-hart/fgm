@@ -1,11 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use keyring::Entry;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::output;
 
 use crate::config::Config;
 
 const SERVICE_NAME: &str = "fgm";
 const USERNAME: &str = "figma_token";
+static KEYCHAIN_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Token source information for debugging
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +35,15 @@ pub struct TokenResult {
     pub source: TokenSource,
 }
 
+/// Enable or disable keychain access (to avoid OS prompts)
+pub fn set_keychain_enabled(enabled: bool) {
+    KEYCHAIN_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_keychain_enabled() -> bool {
+    KEYCHAIN_ENABLED.load(Ordering::Relaxed)
+}
+
 /// Get the Figma token from environment variable, keychain, or config file
 pub fn get_token() -> Result<String> {
     get_token_with_source().map(|r| r.token)
@@ -48,21 +61,7 @@ pub fn get_token_with_source() -> Result<TokenResult> {
         }
     }
 
-    // 2. Then check keychain
-    match get_token_from_keychain() {
-        Ok(token) => {
-            return Ok(TokenResult {
-                token,
-                source: TokenSource::Keychain,
-            });
-        }
-        Err(e) => {
-            // Log keychain error for debugging but continue to config fallback
-            eprintln!("Note: Keychain access failed ({}), checking config file...", e);
-        }
-    }
-
-    // 3. Finally check config file
+    // 2. Then check config file (default storage)
     match get_token_from_config() {
         Ok(token) => {
             return Ok(TokenResult {
@@ -73,6 +72,22 @@ pub fn get_token_with_source() -> Result<TokenResult> {
         Err(_) => {}
     }
 
+    // 3. Finally check keychain (unless disabled)
+    if is_keychain_enabled() {
+        match get_token_from_keychain() {
+            Ok(token) => {
+                return Ok(TokenResult {
+                    token,
+                    source: TokenSource::Keychain,
+                });
+            }
+            Err(e) => {
+                // Log keychain error only in verbose mode
+                output::print_verbose(&format!("Note: Keychain access failed ({}).", e));
+            }
+        }
+    }
+
     Err(anyhow!(
         "No Figma token found. Set FIGMA_TOKEN environment variable or run 'fgm auth login'"
     ))
@@ -80,6 +95,9 @@ pub fn get_token_with_source() -> Result<TokenResult> {
 
 /// Get token specifically from keychain
 pub fn get_token_from_keychain() -> Result<String> {
+    if !is_keychain_enabled() {
+        return Err(anyhow!("Keychain access disabled"));
+    }
     let entry = Entry::new(SERVICE_NAME, USERNAME)
         .context("Failed to create keychain entry - keychain may not be available")?;
 
@@ -110,6 +128,9 @@ pub fn store_token(token: &str) -> Result<()> {
 
 /// Store token in keychain
 pub fn store_token_in_keychain(token: &str) -> Result<()> {
+    if !is_keychain_enabled() {
+        return Err(anyhow!("Keychain access disabled"));
+    }
     let entry = Entry::new(SERVICE_NAME, USERNAME)
         .context("Failed to create keychain entry")?;
 
@@ -117,7 +138,7 @@ pub fn store_token_in_keychain(token: &str) -> Result<()> {
         .set_password(token)
         .map_err(|e| match e {
             keyring::Error::PlatformFailure(ref msg) => {
-                anyhow!("Keychain platform error: {}. Try 'fgm auth login --config' to store in config file instead.", msg)
+                anyhow!("Keychain platform error: {}. Try 'fgm auth login' to store in config file instead.", msg)
             }
             keyring::Error::NoStorageAccess(ref msg) => {
                 anyhow!("Keychain access denied: {}. Check your system keychain settings.", msg)
@@ -140,9 +161,11 @@ pub fn remove_token() -> Result<()> {
     let mut errors = Vec::new();
 
     // Try to remove from keychain
-    match remove_token_from_keychain() {
-        Ok(_) => removed_any = true,
-        Err(e) => errors.push(format!("keychain: {}", e)),
+    if is_keychain_enabled() {
+        match remove_token_from_keychain() {
+            Ok(_) => removed_any = true,
+            Err(e) => errors.push(format!("keychain: {}", e)),
+        }
     }
 
     // Also remove from config file if present
@@ -162,6 +185,9 @@ pub fn remove_token() -> Result<()> {
 
 /// Remove token from keychain
 pub fn remove_token_from_keychain() -> Result<()> {
+    if !is_keychain_enabled() {
+        return Err(anyhow!("Keychain access disabled"));
+    }
     let entry = Entry::new(SERVICE_NAME, USERNAME)
         .context("Failed to create keychain entry")?;
 
@@ -192,6 +218,9 @@ pub fn has_token() -> bool {
 
 /// Check if keychain is accessible (for diagnostics)
 pub fn test_keychain_access() -> Result<()> {
+    if !is_keychain_enabled() {
+        return Err(anyhow!("Keychain access disabled"));
+    }
     let entry = Entry::new(SERVICE_NAME, "test_access")
         .context("Failed to create test keychain entry")?;
 

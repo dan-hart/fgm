@@ -1,6 +1,8 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::{ExportCommands, Platform};
+use crate::config::Config;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -10,6 +12,7 @@ use std::path::Path;
 pub async fn run(command: ExportCommands) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
+    let config = Config::load().unwrap_or_default();
 
     match command {
         ExportCommands::File {
@@ -34,13 +37,50 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             }
 
             // Handle platform-specific export
+            let default_format = crate::cli::ExportFormat::from_config(
+                &config.export.default_format,
+            )
+            .unwrap_or(crate::cli::ExportFormat::Png);
+            let format = format.unwrap_or(default_format);
+            let scale = scale.unwrap_or(config.export.default_scale);
+            if !(1.0..=4.0).contains(&scale) {
+                anyhow::bail!("Scale must be between 1 and 4");
+            }
+            let output = output.unwrap_or_else(|| {
+                config
+                    .export
+                    .output_dir
+                    .clone()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| ".".into())
+            });
+
             if let Some(platform) = platform {
-                export_platform(&client, &parsed.file_key, &node_ids, all_frames, &output, name.as_deref(), platform).await
+                export_platform(
+                    &client,
+                    &parsed.file_key,
+                    &node_ids,
+                    all_frames,
+                    &output,
+                    name.as_deref(),
+                    platform,
+                )
+                .await
             } else {
-                export_file(&client, &parsed.file_key, &node_ids, all_frames, &format.to_string(), scale, &output, name.as_deref()).await
+                export_file(
+                    &client,
+                    &parsed.file_key,
+                    &node_ids,
+                    all_frames,
+                    &format.to_string(),
+                    scale,
+                    &output,
+                    name.as_deref(),
+                )
+                .await
             }
         }
-        ExportCommands::Batch { manifest } => batch_export(&client, &manifest).await,
+        ExportCommands::Batch { manifest } => batch_export(&client, &manifest, &config).await,
     }
 }
 
@@ -50,7 +90,7 @@ async fn export_file(
     node_ids: &[String],
     all_frames: bool,
     format: &str,
-    scale: u8,
+    scale: f32,
     output: &Path,
     custom_name: Option<&str>,
 ) -> Result<()> {
@@ -62,20 +102,26 @@ async fn export_file(
         let file = client.get_file(file_key).await?;
         extract_frame_ids(&file.document)
     } else if node_ids.is_empty() {
-        println!("{}", "No nodes specified. Use --node, --all-frames, or a URL with ?node-id=".yellow());
-        return Ok(());
+        anyhow::bail!(
+            "No nodes specified. Use --node, --all-frames, or a URL with ?node-id="
+        );
     } else {
         node_ids.to_vec()
     };
 
     if ids_to_export.is_empty() {
-        println!("{}", "No frames found to export".yellow());
-        return Ok(());
+        anyhow::bail!("No frames found to export");
     }
 
-    println!(
-        "{}",
-        format!("Exporting {} node(s) as {} at {}x...", ids_to_export.len(), format, scale).bold()
+    output::print_status(
+        &format!(
+            "Exporting {} node(s) as {} at {}x...",
+            ids_to_export.len(),
+            format,
+            scale
+        )
+        .bold()
+        .to_string(),
     );
 
     // Get export URLs (batch in chunks to avoid API limits)
@@ -90,9 +136,9 @@ async fn export_file(
         let images = client.export_images(file_key, &chunk_vec, format, scale).await?;
 
         if let Some(err) = &images.err {
-            println!("{}: {}", "API Error".red(), err);
+            output::print_warning(&format!("API Error: {}", err));
             if images.status == Some(400) || images.status == Some(404) {
-                println!("{}", "  Some node IDs may be invalid or inaccessible".yellow());
+                output::print_warning("Some node IDs may be invalid or inaccessible");
             }
             continue;
         }
@@ -106,17 +152,21 @@ async fn export_file(
     }
 
     if all_images.is_empty() {
-        println!("{}", "No images were exported".yellow());
-        return Ok(());
+        anyhow::bail!("No images were exported");
     }
 
     // Download each image
-    let pb = ProgressBar::new(all_images.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")?
-            .progress_chars("#>-"),
-    );
+    let pb = if output::is_quiet() || output::format() == crate::output::OutputFormat::Json {
+        ProgressBar::hidden()
+    } else {
+        let bar = ProgressBar::new(all_images.len() as u64);
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")?
+                .progress_chars("#>-"),
+        );
+        bar
+    };
 
     // Use custom name only if there's a single image
     let use_custom_name = custom_name.is_some() && all_images.len() == 1;
@@ -140,7 +190,7 @@ async fn export_file(
     }
 
     pb.finish_with_message("done");
-    println!("{}", format!("Exported to {}", output.display()).green());
+    output::print_success(&format!("Exported to {}", output.display()));
     Ok(())
 }
 
@@ -163,13 +213,14 @@ fn extract_frame_ids(document: &crate::api::types::Document) -> Vec<String> {
     ids
 }
 
-async fn batch_export(client: &FigmaClient, manifest_path: &Path) -> Result<()> {
+async fn batch_export(client: &FigmaClient, manifest_path: &Path, config: &Config) -> Result<()> {
     let content = fs::read_to_string(manifest_path)?;
     let manifest: BatchManifest = toml::from_str(&content)?;
 
-    println!(
-        "{}",
-        format!("Batch exporting {} items...", manifest.exports.len()).bold()
+    output::print_status(
+        &format!("Batch exporting {} items...", manifest.exports.len())
+            .bold()
+            .to_string(),
     );
 
     for export in manifest.exports {
@@ -178,14 +229,28 @@ async fn batch_export(client: &FigmaClient, manifest_path: &Path) -> Result<()> 
         let node_id = export.node.or(parsed.node_id).unwrap_or_default();
         let ids = if node_id.is_empty() { vec![] } else { vec![node_id] };
 
-        let output = std::path::PathBuf::from(&export.output.unwrap_or_else(|| ".".to_string()));
+        let output = std::path::PathBuf::from(&export.output.unwrap_or_else(|| {
+            config
+                .export
+                .output_dir
+                .clone()
+                .unwrap_or_else(|| ".".to_string())
+        }));
+        let format = export
+            .format
+            .clone()
+            .unwrap_or_else(|| config.export.default_format.clone());
+        let scale = export.scale.unwrap_or(config.export.default_scale);
+        if !(1.0..=4.0).contains(&scale) {
+            anyhow::bail!("Scale must be between 1 and 4");
+        }
         export_file(
             client,
             &parsed.file_key,
             &ids,
             false,
-            &export.format.unwrap_or_else(|| "png".to_string()),
-            export.scale.unwrap_or(2),
+            &format,
+            scale,
             &output,
             export.name.as_deref(),
         )
@@ -209,28 +274,22 @@ async fn export_platform(
         let file = client.get_file(file_key).await?;
         extract_frame_ids(&file.document)
     } else if node_ids.is_empty() {
-        println!("{}", "No nodes specified. Use --node, --all-frames, or a URL with ?node-id=".yellow());
-        return Ok(());
+        anyhow::bail!(
+            "No nodes specified. Use --node, --all-frames, or a URL with ?node-id="
+        );
     } else {
         node_ids.to_vec()
     };
 
     if ids_to_export.is_empty() {
-        println!("{}", "No frames found to export".yellow());
-        return Ok(());
+        anyhow::bail!("No frames found to export");
     }
 
     // Define scale factors for each platform
-    let scales: Vec<(u8, &str)> = match platform {
-        Platform::Ios => vec![(1, ""), (2, "@2x"), (3, "@3x")],
-        Platform::Android => vec![
-            (1, "mdpi"),
-            (2, "hdpi"),    // 1.5x rounded to 2
-            (2, "xhdpi"),   // 2x
-            (3, "xxhdpi"),  // 3x
-            (4, "xxxhdpi"), // 4x
-        ],
-        Platform::Web => vec![(1, ""), (2, "@2x")],
+    let scales: Vec<(f32, &str)> = match platform {
+        Platform::Ios => vec![(1.0, ""), (2.0, "@2x"), (3.0, "@3x")],
+        Platform::Android => vec![(1.0, "mdpi"), (1.5, "hdpi"), (2.0, "xhdpi"), (3.0, "xxhdpi"), (4.0, "xxxhdpi")],
+        Platform::Web => vec![(1.0, ""), (2.0, "@2x")],
     };
 
     let platform_name = match platform {
@@ -239,10 +298,15 @@ async fn export_platform(
         Platform::Web => "Web",
     };
 
-    println!(
-        "{}",
-        format!("Exporting {} node(s) for {} ({} sizes)...",
-            ids_to_export.len(), platform_name, scales.len()).bold()
+    output::print_status(
+        &format!(
+            "Exporting {} node(s) for {} ({} sizes)...",
+            ids_to_export.len(),
+            platform_name,
+            scales.len()
+        )
+        .bold()
+        .to_string(),
     );
 
     // Create platform directory structure
@@ -260,12 +324,17 @@ async fn export_platform(
 
     // Export at each scale
     for (scale, suffix) in &scales {
-        println!("  Exporting at {}x ({})...", scale, if suffix.is_empty() { "1x" } else { suffix });
+        output::print_status(&format!(
+            "  Exporting at {}x ({})...",
+            scale,
+            if suffix.is_empty() { "1x" } else { suffix }
+        ));
 
-        let images = client.export_images(file_key, &ids_to_export, "png", *scale).await?;
+                        let images =
+                            client.export_images(file_key, &ids_to_export, "png", *scale).await?;
 
         if let Some(err) = &images.err {
-            println!("{}: {}", "API Error".red(), err);
+            output::print_warning(&format!("API Error: {}", err));
             continue;
         }
 
@@ -309,27 +378,27 @@ async fn export_platform(
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
-    println!("{}", format!("Exported to {}", output.display()).green());
+    output::print_success(&format!("Exported to {}", output.display()));
 
     // Print platform-specific guidance
     match platform {
         Platform::Ios => {
-            println!();
-            println!("{}", "iOS Usage:".bold());
-            println!("  Add images to Assets.xcassets in Xcode");
-            println!("  Use: Image(\"name\") or UIImage(named: \"name\")");
+            output::print_status("");
+            output::print_status(&"iOS Usage:".bold().to_string());
+            output::print_status("  Add images to Assets.xcassets in Xcode");
+            output::print_status("  Use: Image(\"name\") or UIImage(named: \"name\")");
         }
         Platform::Android => {
-            println!();
-            println!("{}", "Android Usage:".bold());
-            println!("  Copy drawable-* folders to app/src/main/res/");
-            println!("  Use: @drawable/name or R.drawable.name");
+            output::print_status("");
+            output::print_status(&"Android Usage:".bold().to_string());
+            output::print_status("  Copy drawable-* folders to app/src/main/res/");
+            output::print_status("  Use: @drawable/name or R.drawable.name");
         }
         Platform::Web => {
-            println!();
-            println!("{}", "Web Usage:".bold());
-            println!("  Use srcset for responsive images:");
-            println!("  <img src=\"icon.png\" srcset=\"icon@2x.png 2x\">");
+            output::print_status("");
+            output::print_status(&"Web Usage:".bold().to_string());
+            output::print_status("  Use srcset for responsive images:");
+            output::print_status("  <img src=\"icon.png\" srcset=\"icon@2x.png 2x\">");
         }
     }
 
@@ -351,7 +420,7 @@ struct ExportItem {
     #[serde(default)]
     format: Option<String>,
     #[serde(default)]
-    scale: Option<u8>,
+    scale: Option<f32>,
     #[serde(default)]
     output: Option<String>,
 }

@@ -1,10 +1,11 @@
 use crate::auth::{
-    get_token_from_config, get_token_from_keychain, get_token_with_source,
-    get_keychain_info, remove_token, store_token_in_config, store_token_in_keychain,
+    get_keychain_info, get_token_from_config, get_token_from_keychain, get_token_with_source,
+    is_keychain_enabled, remove_token, store_token_in_config, store_token_in_keychain,
     test_keychain_access,
 };
 use crate::cli::AuthCommands;
 use crate::config::Config;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use std::env;
@@ -12,26 +13,25 @@ use std::io::{self, Write};
 
 pub async fn run(command: AuthCommands) -> Result<()> {
     match command {
-        AuthCommands::Login => login().await,
+        AuthCommands::Login { keychain } => login(keychain).await,
         AuthCommands::Logout => logout().await,
         AuthCommands::Status => status().await,
         AuthCommands::Debug => debug().await,
     }
 }
 
-async fn login() -> Result<()> {
-    println!("{}", "Figma Personal Access Token Setup".bold());
-    println!();
-    println!("To get a personal access token:");
-    println!("  1. Go to https://www.figma.com/developers/api#access-tokens");
-    println!("  2. Click 'Get personal access token'");
-    println!("  3. Select scopes: file_content:read (required)");
-    println!("  4. Copy the generated token");
-    println!();
+async fn login(store_in_keychain_only: bool) -> Result<()> {
+    output::print_status(&"Figma Personal Access Token Setup".bold().to_string());
+    output::print_status("");
+    output::print_status("To get a personal access token:");
+    output::print_status("  1. Go to https://www.figma.com/developers/api#access-tokens");
+    output::print_status("  2. Click 'Get personal access token'");
+    output::print_status("  3. Select scopes: file_content:read (required)");
+    output::print_status("  4. Copy the generated token");
+    output::print_status("");
 
-    // Try to open the browser
     if let Err(_) = open::that("https://www.figma.com/developers/api#access-tokens") {
-        println!("{}", "Could not open browser automatically.".yellow());
+        output::print_warning("Could not open browser automatically.");
     }
 
     print!("Paste your token: ");
@@ -42,7 +42,7 @@ async fn login() -> Result<()> {
     let token = token.trim().to_string();
 
     if token.is_empty() {
-        println!("{}", "No token provided. Aborting.".red());
+        output::print_error("No token provided. Aborting.");
         return Ok(());
     }
 
@@ -52,57 +52,38 @@ async fn login() -> Result<()> {
 
     let client = crate::api::FigmaClient::new(token.clone())?;
     if client.validate_token().await? {
-        println!("{}", "valid!".green());
+        output::print_status(&"valid!".green().to_string());
 
-        // Try to store in keychain first
-        match store_token_in_keychain(&token) {
-            Ok(_) => {
-                println!("{}", "Token stored securely in keychain.".green());
+        if store_in_keychain_only {
+            if !is_keychain_enabled() {
+                anyhow::bail!("Keychain access is disabled (use without --no-keychain)");
             }
-            Err(e) => {
-                println!("{}", format!("Keychain storage failed: {}", e).yellow());
-                println!("Falling back to config file storage...");
-
-                // Fall back to config file
-                match store_token_in_config(&token) {
-                    Ok(_) => {
-                        println!(
-                            "{}",
-                            "Token stored in config file (~/.config/fgm/config.toml).".green()
-                        );
-                        println!(
-                            "{}",
-                            "Warning: Config file storage is less secure than keychain.".yellow()
-                        );
-                    }
-                    Err(e) => {
-                        println!("{}: {}", "Failed to store token".red(), e);
-                        println!("You can set FIGMA_TOKEN environment variable as an alternative.");
-                        return Err(e);
-                    }
-                }
-            }
+            store_token_in_keychain(&token)?;
+            output::print_success("Token stored securely in keychain.");
+        } else {
+            // Default to config file storage to avoid keychain prompts
+            store_token_in_config(&token)?;
+            output::print_warning("Token stored in config file (~/.config/fgm/config.toml).");
+            output::print_warning("Config file storage is less secure than keychain.");
         }
 
-        // Verify we can retrieve it
         match get_token_with_source() {
             Ok(result) => {
-                println!(
-                    "{}",
-                    format!("Verified: Token accessible from {}.", result.source).green()
-                );
+                output::print_success(&format!(
+                    "Verified: Token accessible from {}.",
+                    result.source
+                ));
             }
             Err(e) => {
-                println!(
-                    "{}",
-                    format!("Warning: Could not verify token retrieval: {}", e).yellow()
-                );
-                println!("Run 'fgm auth debug' to diagnose the issue.");
+                output::print_warning(&format!(
+                    "Could not verify token retrieval: {}",
+                    e
+                ));
+                output::print_status("Run 'fgm auth debug' to diagnose the issue.");
             }
         }
     } else {
-        println!("{}", "invalid!".red());
-        println!("Please check your token and try again.");
+        output::print_error("Invalid token. Please check your token and try again.");
     }
 
     Ok(())
@@ -111,10 +92,10 @@ async fn login() -> Result<()> {
 async fn logout() -> Result<()> {
     match remove_token() {
         Ok(_) => {
-            println!("{}", "Token removed.".green());
+            output::print_success("Token removed.");
         }
         Err(e) => {
-            println!("{}: {}", "Failed to remove token".red(), e);
+            output::print_error(&format!("Failed to remove token: {}", e));
         }
     }
     Ok(())
@@ -123,144 +104,148 @@ async fn logout() -> Result<()> {
 async fn status() -> Result<()> {
     match get_token_with_source() {
         Ok(result) => {
-            println!("{}", "Authenticated".green().bold());
-            println!("  Source: {}", result.source);
+            output::print_status(&"Authenticated".green().bold().to_string());
+            output::print_status(&format!("  Source: {}", result.source));
 
-            // Validate and show info
             let client = crate::api::FigmaClient::new(result.token)?;
             if client.validate_token().await? {
-                println!("  Token: {}", "valid".green());
+                output::print_status(&format!("  Token: {}", "valid".green()));
             } else {
-                println!("  Token: {}", "invalid or expired".red());
+                output::print_status(&format!("  Token: {}", "invalid or expired".red()));
             }
         }
         Err(_) => {
-            println!("{}", "Not authenticated".red().bold());
-            println!("Run 'fgm auth login' to authenticate.");
-            println!();
-            println!("Tip: Run 'fgm auth debug' to diagnose authentication issues.");
+            output::print_status(&"Not authenticated".red().bold().to_string());
+            output::print_status("Run 'fgm auth login' to authenticate.");
+            output::print_status("");
+            output::print_status("Tip: Run 'fgm auth debug' to diagnose authentication issues.");
         }
     }
     Ok(())
 }
 
 async fn debug() -> Result<()> {
-    println!("{}", "Authentication Debug Information".bold());
-    println!("{}", "=".repeat(50));
-    println!();
+    output::print_status(&"Authentication Debug Information".bold().to_string());
+    output::print_status(&"=".repeat(50));
+    output::print_status("");
 
-    // Get keychain info
     let (service, username) = get_keychain_info();
-    println!("{}", "Keychain Configuration:".bold());
-    println!("  Service name: {}", service);
-    println!("  Account name: {}", username);
-    println!();
+    output::print_status(&"Keychain Configuration:".bold().to_string());
+    output::print_status(&format!("  Service name: {}", service));
+    output::print_status(&format!("  Account name: {}", username));
+    output::print_status("");
 
-    // Check environment variable
-    println!("{}", "1. Environment Variable (FIGMA_TOKEN)".bold());
+    output::print_status(&"1. Environment Variable (FIGMA_TOKEN)".bold().to_string());
     match env::var("FIGMA_TOKEN") {
         Ok(token) if !token.is_empty() => {
             let masked = mask_token(&token);
-            println!("  Status: {}", "SET".green());
-            println!("  Value:  {}", masked);
+            output::print_status(&format!("  Status: {}", "SET".green()));
+            output::print_status(&format!("  Value:  {}", masked));
         }
         Ok(_) => {
-            println!("  Status: {}", "SET BUT EMPTY".yellow());
+            output::print_status(&format!("  Status: {}", "SET BUT EMPTY".yellow()));
         }
         Err(_) => {
-            println!("  Status: {}", "NOT SET".yellow());
+            output::print_status(&format!("  Status: {}", "NOT SET".yellow()));
         }
     }
-    println!();
+    output::print_status("");
 
-    // Check keychain
-    println!("{}", "2. System Keychain".bold());
-
-    // First test keychain access
-    print!("  Access test: ");
-    match test_keychain_access() {
-        Ok(_) => {
-            println!("{}", "PASSED".green());
+    output::print_status(&"2. System Keychain".bold().to_string());
+    if !is_keychain_enabled() {
+        output::print_status(&"  Status: SKIPPED (disabled)".yellow().to_string());
+    } else {
+        print!("  Access test: ");
+        match test_keychain_access() {
+            Ok(_) => {
+                output::print_status(&"PASSED".green().to_string());
+            }
+            Err(e) => {
+                output::print_status(&"FAILED".red().to_string());
+                output::print_status(&format!("  Error: {}", e));
+            }
         }
-        Err(e) => {
-            println!("{}", "FAILED".red());
-            println!("  Error: {}", e);
+
+        print!("  Token lookup: ");
+        match get_token_from_keychain() {
+            Ok(token) => {
+                let masked = mask_token(&token);
+                output::print_status(&"FOUND".green().to_string());
+                output::print_status(&format!("  Value: {}", masked));
+            }
+            Err(e) => {
+                output::print_status(&"NOT FOUND".yellow().to_string());
+                output::print_status(&format!("  Details: {}", e));
+            }
         }
     }
+    output::print_status("");
 
-    // Then check for stored token
-    print!("  Token lookup: ");
-    match get_token_from_keychain() {
-        Ok(token) => {
-            let masked = mask_token(&token);
-            println!("{}", "FOUND".green());
-            println!("  Value: {}", masked);
-        }
-        Err(e) => {
-            println!("{}", "NOT FOUND".yellow());
-            println!("  Details: {}", e);
-        }
-    }
-    println!();
-
-    // Check config file
-    println!("{}", "3. Config File".bold());
+    output::print_status(&"3. Config File".bold().to_string());
     match Config::config_path() {
         Some(path) => {
-            println!("  Path: {}", path.display());
+            output::print_status(&format!("  Path: {}", path.display()));
             if path.exists() {
-                println!("  File: {}", "EXISTS".green());
+                output::print_status(&format!("  File: {}", "EXISTS".green()));
                 match get_token_from_config() {
                     Ok(token) => {
                         let masked = mask_token(&token);
-                        println!("  Token: {} ({})", "FOUND".green(), masked);
+                        output::print_status(&format!(
+                            "  Token: {} ({})",
+                            "FOUND".green(),
+                            masked
+                        ));
                     }
                     Err(_) => {
-                        println!("  Token: {}", "NOT SET".yellow());
+                        output::print_status(&format!("  Token: {}", "NOT SET".yellow()));
                     }
                 }
             } else {
-                println!("  File: {}", "DOES NOT EXIST".yellow());
+                output::print_status(&format!("  File: {}", "DOES NOT EXIST".yellow()));
             }
         }
         None => {
-            println!("  Path: {}", "COULD NOT DETERMINE".red());
+            output::print_status(&format!("  Path: {}", "COULD NOT DETERMINE".red()));
         }
     }
-    println!();
+    output::print_status("");
 
-    // Overall status
-    println!("{}", "Summary".bold());
-    println!("{}", "-".repeat(50));
+    output::print_status(&"Summary".bold().to_string());
+    output::print_status(&"-".repeat(50));
     match get_token_with_source() {
         Ok(result) => {
             let masked = mask_token(&result.token);
-            println!("  Active token: {} (from {})", masked, result.source);
-            println!("  Status: {}", "READY".green().bold());
+            output::print_status(&format!(
+                "  Active token: {} (from {})",
+                masked, result.source
+            ));
+            output::print_status(&format!("  Status: {}", "READY".green().bold()));
         }
         Err(e) => {
-            println!("  Active token: {}", "NONE".red());
-            println!("  Error: {}", e);
-            println!("  Status: {}", "NOT AUTHENTICATED".red().bold());
-            println!();
-            println!("{}", "Troubleshooting:".bold());
-            println!("  1. Run 'fgm auth login' to store a new token");
-            println!("  2. Or set FIGMA_TOKEN environment variable");
-            println!("  3. Check macOS Keychain Access app for 'fgm' entries");
-            println!();
-            println!("  Manual keychain check:");
-            println!(
+            output::print_status(&format!("  Active token: {}", "NONE".red()));
+            output::print_status(&format!("  Error: {}", e));
+            output::print_status(&format!(
+                "  Status: {}",
+                "NOT AUTHENTICATED".red().bold()
+            ));
+            output::print_status("");
+            output::print_status(&"Troubleshooting:".bold().to_string());
+            output::print_status("  1. Run 'fgm auth login' to store a new token");
+            output::print_status("  2. Or set FIGMA_TOKEN environment variable");
+            output::print_status("  3. Check macOS Keychain Access app for 'fgm' entries");
+            output::print_status("");
+            output::print_status(&"Manual keychain check:".bold().to_string());
+            output::print_status(&format!(
                 "    security find-generic-password -s \"{}\" -a \"{}\" 2>&1",
                 service, username
-            );
+            ));
         }
     }
-    println!();
+    output::print_status("");
 
     Ok(())
 }
 
-/// Mask a token for display (show first 8 and last 4 chars)
 fn mask_token(token: &str) -> String {
     if token.len() <= 12 {
         return "*".repeat(token.len());

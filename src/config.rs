@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Figma token (fallback when keychain unavailable)
     /// WARNING: Stored in plaintext - prefer keychain storage
@@ -19,7 +19,7 @@ pub struct Config {
     pub tokens: TokensConfig,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DefaultsConfig {
     pub team_id: Option<String>,
     #[serde(default = "default_output_format")]
@@ -28,16 +28,16 @@ pub struct DefaultsConfig {
     pub image_protocol: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExportConfig {
     #[serde(default = "default_format")]
     pub default_format: String,
     #[serde(default = "default_scale")]
-    pub default_scale: u8,
+    pub default_scale: f32,
     pub output_dir: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TokensConfig {
     #[serde(default = "default_css_prefix")]
     pub css_prefix: String,
@@ -57,8 +57,8 @@ fn default_format() -> String {
     "png".to_string()
 }
 
-fn default_scale() -> u8 {
-    2
+fn default_scale() -> f32 {
+    2.0
 }
 
 fn default_css_prefix() -> String {
@@ -67,6 +67,46 @@ fn default_css_prefix() -> String {
 
 fn default_swift_prefix() -> String {
     "Figma".to_string()
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            figma_token: None,
+            defaults: DefaultsConfig::default(),
+            export: ExportConfig::default(),
+            tokens: TokensConfig::default(),
+        }
+    }
+}
+
+impl Default for DefaultsConfig {
+    fn default() -> Self {
+        Self {
+            team_id: None,
+            output_format: default_output_format(),
+            image_protocol: default_image_protocol(),
+        }
+    }
+}
+
+impl Default for ExportConfig {
+    fn default() -> Self {
+        Self {
+            default_format: default_format(),
+            default_scale: default_scale(),
+            output_dir: None,
+        }
+    }
+}
+
+impl Default for TokensConfig {
+    fn default() -> Self {
+        Self {
+            css_prefix: default_css_prefix(),
+            swift_prefix: default_swift_prefix(),
+        }
+    }
 }
 
 impl Config {

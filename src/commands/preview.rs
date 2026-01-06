@@ -1,20 +1,23 @@
 use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::{ImageProtocol, PreviewArgs};
+use crate::config::Config;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use image::GenericImageView;
-use viuer::{Config, print_from_file};
+use viuer::{Config as ViuConfig, print_from_file};
 
 pub async fn run(args: PreviewArgs) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
+    let app_config = Config::load().unwrap_or_default();
 
     // Parse URL or file key
     let parsed = FigmaUrl::parse(&args.file_key)?;
     let node_id = args.node.or(parsed.node_id);
 
-    println!("{}", "Fetching preview...".bold());
+    output::print_status(&"Fetching preview...".bold().to_string());
 
     // Get node ID - either from args or get first frame
     let target_node = if let Some(id) = node_id {
@@ -22,30 +25,32 @@ pub async fn run(args: PreviewArgs) -> Result<()> {
     } else {
         // Get file and find first frame
         let file = client.get_file(&parsed.file_key).await?;
-        println!("  File: {}", file.name.cyan());
+        output::print_status(&format!("  File: {}", file.name.cyan()));
 
         // Find first frame in the document
         let first_frame = find_first_frame(&file.document);
         match first_frame {
             Some(id) => {
-                println!("  Using first frame: {}", id.dimmed());
+                output::print_status(&format!("  Using first frame: {}", id.dimmed()));
                 id
             }
             None => {
-                println!("{}", "No frames found in document. Use --node to specify a node ID.".yellow());
-                return Ok(());
+                anyhow::bail!("No frames found in document. Use --node to specify a node ID.");
             }
         }
     };
 
     // Export the node as PNG
+    let scale = app_config.export.default_scale;
+    if !(1.0..=4.0).contains(&scale) {
+        anyhow::bail!("Scale must be between 1 and 4");
+    }
     let images = client
-        .export_images(&parsed.file_key, &[target_node.clone()], "png", 2)
+        .export_images(&parsed.file_key, &[target_node.clone()], "png", scale)
         .await?;
 
     if let Some(err) = &images.err {
-        println!("{}: {}", "API Error".red(), err);
-        return Ok(());
+        anyhow::bail!("API Error: {}", err);
     }
 
     // Get the image URL
@@ -62,11 +67,15 @@ pub async fn run(args: PreviewArgs) -> Result<()> {
     let img = image::load_from_memory(&image_bytes)?;
     let (width, height) = img.dimensions();
 
-    println!("  Dimensions: {}x{}", width, height);
-    println!();
+    output::print_status(&format!("  Dimensions: {}x{}", width, height));
+    output::print_status("");
 
     // Configure viuer based on protocol
-    let config = build_viuer_config(&args.protocol, args.width);
+    let protocol = args
+        .protocol
+        .or_else(|| ImageProtocol::from_config(&app_config.defaults.image_protocol))
+        .unwrap_or(ImageProtocol::Auto);
+    let config = build_viuer_config(&protocol, args.width);
 
     // Save to temp file for viuer (it works better with files)
     let temp_path = std::env::temp_dir().join("fgm-preview.png");
@@ -76,8 +85,8 @@ pub async fn run(args: PreviewArgs) -> Result<()> {
     match print_from_file(&temp_path, &config) {
         Ok(_) => {}
         Err(e) => {
-            println!("{}: {}", "Preview failed".yellow(), e);
-            println!("Try specifying a protocol: --protocol iterm | kitty | sixel");
+            output::print_warning(&format!("Preview failed: {}", e));
+            output::print_status("Try specifying a protocol: --protocol iterm | kitty | sixel");
         }
     }
 
@@ -104,8 +113,8 @@ fn find_first_frame(document: &crate::api::types::Document) -> Option<String> {
     None
 }
 
-fn build_viuer_config(protocol: &ImageProtocol, width: Option<u32>) -> Config {
-    let mut config = Config::default();
+fn build_viuer_config(protocol: &ImageProtocol, width: Option<u32>) -> ViuConfig {
+    let mut config = ViuConfig::default();
 
     // Set width if specified
     if let Some(w) = width {

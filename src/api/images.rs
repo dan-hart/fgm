@@ -20,7 +20,7 @@ impl FigmaClient {
         file_key: &str,
         node_ids: &[String],
         format: &str,
-        scale: u8,
+        scale: f32,
     ) -> Result<ImageResponse> {
         // Create cache key based on all parameters
         let params_hash = CacheKey::hash_export_params(node_ids, format, scale);

@@ -63,14 +63,14 @@ impl CacheKey {
     }
 
     /// Create hash of export parameters
-    pub fn hash_export_params(ids: &[String], format: &str, scale: u8) -> String {
+    pub fn hash_export_params(ids: &[String], format: &str, scale: f32) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         ids.hash(&mut hasher);
         format.hash(&mut hasher);
-        scale.hash(&mut hasher);
+        scale.to_bits().hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
 }

@@ -1,8 +1,11 @@
 use crate::api::FigmaClient;
 use crate::auth::get_token;
 use crate::cli::ComponentsCommands;
+use crate::output;
 use anyhow::Result;
 use colored::Colorize;
+use serde::Serialize;
+use tabled::Tabled;
 
 pub async fn run(command: ComponentsCommands) -> Result<()> {
     let token = get_token()?;
@@ -15,85 +18,152 @@ pub async fn run(command: ComponentsCommands) -> Result<()> {
 }
 
 async fn list(client: &FigmaClient, team_id: &str) -> Result<()> {
-    println!("{}", format!("Published components in team {}:", team_id).bold());
+    output::print_status(&format!("Published components in team {}:", team_id).bold().to_string());
 
     let response = client.get_team_components(team_id).await?;
 
     if let Some(msg) = &response.message {
         if response.status == Some(403) || response.status == Some(404) {
-            println!("{}: {}", "Error".red(), msg);
-            println!("{}", "Note: This endpoint requires the team to have a published library.".yellow());
-            return Ok(());
+            anyhow::bail!(
+                "{} (this endpoint requires the team to have a published library)",
+                msg
+            );
         }
     }
 
     if let Some(meta) = response.meta {
         if meta.components.is_empty() {
-            println!("{}", "No published components found".yellow());
+            output::print_warning("No published components found");
             return Ok(());
         }
 
-        for component in &meta.components {
-            println!();
-            println!("  {} ({})", component.name.cyan(), component.key.dimmed());
-            if !component.description.is_empty() {
-                println!("    {}", component.description);
-            }
-            println!("    File: {} | Node: {}", component.file_key, component.node_id);
-            println!("    Updated: {}", component.updated_at);
+        let rows: Vec<ComponentRow> = meta
+            .components
+            .iter()
+            .map(|component| ComponentRow {
+                name: component.name.clone(),
+                key: component.key.clone(),
+                file_key: component.file_key.clone(),
+                node_id: component.node_id.clone(),
+                updated_at: component.updated_at.clone(),
+            })
+            .collect();
+
+        if output::format() == crate::output::OutputFormat::Json {
+            let out = ComponentsListOutput {
+                team_id: team_id.to_string(),
+                components: rows,
+            };
+            output::print_json(&out)?;
+        } else {
+            output::print_table(&rows);
+            output::print_status(&format!(
+                "Total: {} components",
+                meta.components.len()
+            )
+            .bold()
+            .to_string());
         }
-        println!();
-        println!("{}", format!("Total: {} components", meta.components.len()).bold());
     } else {
-        println!("{}", "No component data returned".yellow());
+        output::print_warning("No component data returned");
     }
 
     Ok(())
 }
 
 async fn get(client: &FigmaClient, component_key: &str) -> Result<()> {
-    println!("{}", format!("Component: {}", component_key).bold());
+    output::print_status(&format!("Component: {}", component_key).bold().to_string());
 
     let response = client.get_component(component_key).await?;
 
     if let Some(msg) = &response.message {
         if response.status == Some(404) {
-            println!("{}: {}", "Error".red(), msg);
-            return Ok(());
+            anyhow::bail!("{}", msg);
         }
     }
 
     if let Some(meta) = response.meta {
-        println!();
-        println!("  Name: {}", meta.name.cyan());
-        if !meta.description.is_empty() {
-            println!("  Description: {}", meta.description);
-        }
-        println!("  File: {}", meta.file_key);
-        println!("  Node ID: {}", meta.node_id);
+        let detail = ComponentDetail {
+            key: component_key.to_string(),
+            name: meta.name.clone(),
+            description: if meta.description.is_empty() {
+                None
+            } else {
+                Some(meta.description.clone())
+            },
+            file_key: meta.file_key.clone(),
+            node_id: meta.node_id.clone(),
+            frame: meta
+                .containing_frame
+                .as_ref()
+                .and_then(|frame| frame.name.clone()),
+            page: meta
+                .containing_frame
+                .as_ref()
+                .and_then(|frame| frame.page_name.clone()),
+            created_at: meta.created_at.clone(),
+            updated_at: meta.updated_at.clone(),
+            thumbnail_url: meta.thumbnail_url.clone(),
+        };
 
-        if let Some(frame) = &meta.containing_frame {
-            if let Some(name) = &frame.name {
-                println!("  Frame: {}", name);
+        if output::format() == crate::output::OutputFormat::Json {
+            output::print_json(&detail)?;
+        } else {
+            output::print_status("");
+            output::print_status(&format!("  Name: {}", detail.name.cyan()));
+            if let Some(desc) = &detail.description {
+                output::print_status(&format!("  Description: {}", desc));
             }
-            if let Some(page) = &frame.page_name {
-                println!("  Page: {}", page);
+            output::print_status(&format!("  File: {}", detail.file_key));
+            output::print_status(&format!("  Node ID: {}", detail.node_id));
+            if let Some(frame) = &detail.frame {
+                output::print_status(&format!("  Frame: {}", frame));
             }
-        }
-
-        if let Some(created) = &meta.created_at {
-            println!("  Created: {}", created);
-        }
-        if let Some(updated) = &meta.updated_at {
-            println!("  Updated: {}", updated);
-        }
-
-        if let Some(thumb) = &meta.thumbnail_url {
-            println!("  Thumbnail: {}", thumb.dimmed());
+            if let Some(page) = &detail.page {
+                output::print_status(&format!("  Page: {}", page));
+            }
+            if let Some(created) = &detail.created_at {
+                output::print_status(&format!("  Created: {}", created));
+            }
+            if let Some(updated) = &detail.updated_at {
+                output::print_status(&format!("  Updated: {}", updated));
+            }
+            if let Some(thumb) = &detail.thumbnail_url {
+                output::print_status(&format!("  Thumbnail: {}", thumb.dimmed()));
+            }
         }
     } else {
-        println!("{}", "No component data returned".yellow());
+        output::print_warning("No component data returned");
     }
 
     Ok(())
+}
+
+#[derive(Tabled, Serialize)]
+struct ComponentRow {
+    name: String,
+    key: String,
+    file_key: String,
+    node_id: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct ComponentsListOutput {
+    team_id: String,
+    components: Vec<ComponentRow>,
+}
+
+#[derive(Serialize)]
+struct ComponentDetail {
+    key: String,
+    name: String,
+    description: Option<String>,
+    file_key: String,
+    node_id: String,
+    frame: Option<String>,
+    page: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    thumbnail_url: Option<String>,
 }

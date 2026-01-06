@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::output::OutputFormat;
+
 #[derive(Parser)]
 #[command(name = "fgm")]
 #[command(author, version)]
@@ -14,7 +16,7 @@ Requires a Figma Personal Access Token (PAT). Get one at:
 https://www.figma.com/developers/api#access-tokens
 
 Set via FIGMA_TOKEN environment variable or run 'fgm auth login' to store
-securely in your system keychain.")]
+in your config file by default. Use --keychain to store in the system keychain.")]
 #[command(after_help = "GETTING STARTED:
     fgm auth login                              Store your Figma token
     fgm files get <URL>                         Get file info from URL
@@ -28,6 +30,24 @@ COMMON WORKFLOWS:
 Learn more: https://github.com/dan-hart/fgm")]
 #[command(propagate_version = true)]
 pub struct Cli {
+    /// Output format (table or json)
+    #[arg(long, global = true, value_enum, help = "Output format")]
+    pub format: Option<OutputFormat>,
+    /// Output JSON (alias for --format json)
+    #[arg(long, global = true, conflicts_with = "format", help = "Output JSON")]
+    pub json: bool,
+    /// Suppress non-error output
+    #[arg(short, long, global = true, conflicts_with = "verbose", help = "Quiet mode")]
+    pub quiet: bool,
+    /// Enable verbose output
+    #[arg(short, long, global = true, conflicts_with = "quiet", help = "Verbose mode")]
+    pub verbose: bool,
+    /// Disable colored output
+    #[arg(long, global = true, help = "Disable colored output")]
+    pub no_color: bool,
+    /// Disable all keychain access (avoid macOS prompts)
+    #[arg(long, global = true, help = "Disable all keychain access")]
+    pub no_keychain: bool,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -141,21 +161,34 @@ MANIFEST FORMAT:
         #[command(subcommand)]
         command: CacheCommands,
     },
+
+    /// Manage CLI configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
 }
 
 // Auth subcommands
 #[derive(Subcommand)]
 pub enum AuthCommands {
     /// Store your Figma Personal Access Token securely
-    #[command(long_about = "Store your Figma Personal Access Token in the system keychain.
+    #[command(long_about = "Store your Figma Personal Access Token in the config file by default.
 
 Opens your browser to the Figma token creation page, then prompts you to
-paste your token. The token is stored securely in:
+paste your token. By default, the token is stored in:
+  - ~/.config/fgm/config.toml (plaintext)
+
+Use --keychain to store it securely in:
   - macOS: Keychain
   - Linux: Secret Service (GNOME Keyring, KWallet)
 
-Token priority: FIGMA_TOKEN env var > Keychain > Config file")]
-    Login,
+Token priority: FIGMA_TOKEN env var > Config file > Keychain")]
+    Login {
+        /// Store token in keychain (secure)
+        #[arg(long, help = "Store token in keychain (secure)")]
+        keychain: bool,
+    },
 
     /// Remove stored authentication token
     #[command(long_about = "Remove your Figma token from the system keychain.
@@ -191,6 +224,12 @@ pub enum FilesCommands {
 
 Use --team to list all projects in a team.
 Use --project to list all files in a specific project.")]
+    #[command(group(
+        clap::ArgGroup::new("scope")
+            .required(true)
+            .args(&["project", "team"])
+            .multiple(false)
+    ))]
     #[command(after_help = "EXAMPLES:
     fgm files list --team 123456789
     fgm files list --project 987654321")]
@@ -284,20 +323,25 @@ Use --platform to generate all required sizes for iOS, Android, or Web.")]
         #[arg(help = "File key (abc123) or URL with optional ?node-id=")]
         file_key_or_url: String,
         /// Node IDs to export (can specify multiple: --node \"1:2\" --node \"1:3\")
-        #[arg(short, long, help = "Node ID to export (repeatable)")]
+        #[arg(short, long, conflicts_with = "all_frames", help = "Node ID to export (repeatable)")]
         node: Vec<String>,
         /// Export all top-level frames in the file
-        #[arg(long, help = "Export every top-level frame")]
+        #[arg(long, conflicts_with = "node", help = "Export every top-level frame")]
         all_frames: bool,
         /// Image format: png, svg, pdf, jpg
-        #[arg(short, long, default_value = "png", help = "Output format")]
-        format: ExportFormat,
+        #[arg(short, long, help = "Output format")]
+        format: Option<ExportFormat>,
         /// Scale factor (1-4, default: 2)
-        #[arg(short, long, default_value = "2", help = "Scale multiplier (1-4)")]
-        scale: u8,
+        #[arg(
+            short,
+            long,
+            value_parser = clap::value_parser!(f32),
+            help = "Scale multiplier (1-4)"
+        )]
+        scale: Option<f32>,
         /// Output directory
-        #[arg(short, long, default_value = ".", help = "Where to save exported files")]
-        output: PathBuf,
+        #[arg(short, long, help = "Where to save exported files")]
+        output: Option<PathBuf>,
         /// Custom filename (without extension, single node only)
         #[arg(long, help = "Override the output filename")]
         name: Option<String>,
@@ -354,6 +398,18 @@ impl std::fmt::Display for ExportFormat {
     }
 }
 
+impl ExportFormat {
+    pub fn from_config(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "png" => Some(ExportFormat::Png),
+            "svg" => Some(ExportFormat::Svg),
+            "pdf" => Some(ExportFormat::Pdf),
+            "jpg" | "jpeg" => Some(ExportFormat::Jpg),
+            _ => None,
+        }
+    }
+}
+
 // Compare arguments
 #[derive(clap::Args)]
 pub struct CompareArgs {
@@ -367,8 +423,25 @@ pub struct CompareArgs {
     #[arg(short, long, help = "Save diff visualization to file")]
     pub output: Option<PathBuf>,
     /// Maximum acceptable difference (default: 5%)
-    #[arg(short, long, default_value = "5.0", help = "Pass/fail threshold percentage")]
+    #[arg(
+        short,
+        long,
+        default_value = "5.0",
+        value_parser = clap::value_parser!(f32),
+        help = "Pass/fail threshold percentage"
+    )]
     pub threshold: f32,
+    /// Pixel tolerance per channel (0-255)
+    #[arg(
+        long,
+        default_value = "10",
+        value_parser = clap::value_parser!(u8),
+        help = "Per-channel pixel tolerance"
+    )]
+    pub tolerance: u8,
+    /// Stop early once threshold is exceeded (faster, approximate diff)
+    #[arg(long, help = "Stop early once threshold is exceeded (faster)")]
+    pub fast: bool,
     /// Compare all images in two directories
     #[arg(long, help = "Treat paths as directories, compare matching filenames")]
     pub batch: bool,
@@ -486,8 +559,8 @@ pub struct PreviewArgs {
     #[arg(short, long, help = "Output width in terminal columns")]
     pub width: Option<u32>,
     /// Force a specific terminal image protocol
-    #[arg(short, long, default_value = "auto", help = "Image protocol: auto, sixel, iterm, kitty")]
-    pub protocol: ImageProtocol,
+    #[arg(short, long, help = "Image protocol: auto, sixel, iterm, kitty")]
+    pub protocol: Option<ImageProtocol>,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -496,6 +569,18 @@ pub enum ImageProtocol {
     Sixel,
     Iterm,
     Kitty,
+}
+
+impl ImageProtocol {
+    pub fn from_config(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "auto" => Some(ImageProtocol::Auto),
+            "sixel" => Some(ImageProtocol::Sixel),
+            "iterm" => Some(ImageProtocol::Iterm),
+            "kitty" => Some(ImageProtocol::Kitty),
+            _ => None,
+        }
+    }
 }
 
 // Compare URL arguments - export from Figma and compare in one command
@@ -511,11 +596,33 @@ pub struct CompareUrlArgs {
     #[arg(short, long, help = "Save diff visualization to file")]
     pub output: Option<PathBuf>,
     /// Maximum acceptable difference (default: 5%)
-    #[arg(short, long, default_value = "5.0", help = "Pass/fail threshold percentage")]
+    #[arg(
+        short,
+        long,
+        default_value = "5.0",
+        value_parser = clap::value_parser!(f32),
+        help = "Pass/fail threshold percentage"
+    )]
     pub threshold: f32,
     /// Export scale factor (default: 2)
-    #[arg(short, long, default_value = "2", help = "Scale multiplier for Figma export (1-4)")]
-    pub scale: u8,
+    #[arg(
+        short,
+        long,
+        value_parser = clap::value_parser!(f32),
+        help = "Scale multiplier for Figma export (1-4)"
+    )]
+    pub scale: Option<f32>,
+    /// Pixel tolerance per channel (0-255)
+    #[arg(
+        long,
+        default_value = "10",
+        value_parser = clap::value_parser!(u8),
+        help = "Per-channel pixel tolerance"
+    )]
+    pub tolerance: u8,
+    /// Stop early once threshold is exceeded (faster, approximate diff)
+    #[arg(long, help = "Stop early once threshold is exceeded (faster)")]
+    pub fast: bool,
 }
 
 // Snapshot subcommands
@@ -717,5 +824,48 @@ Clearing cache forces fresh API calls on next operation.")]
         /// Clear cache for specific file key
         #[arg(long, help = "Clear cache for specific file")]
         file: Option<String>,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_includes_output_flags() {
+        let mut cmd = Cli::command();
+        let help = cmd.render_help().to_string();
+        assert!(help.contains("--format"));
+        assert!(help.contains("--json"));
+        assert!(help.contains("--no-color"));
+    }
+}
+
+// Config subcommands
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Show effective configuration
+    Show,
+
+    /// Print config file path
+    Path,
+
+    /// Get a specific configuration value
+    Get {
+        /// Config key (e.g., defaults.output_format)
+        key: String,
+    },
+
+    /// Set a configuration value
+    Set {
+        /// Config key (e.g., defaults.output_format)
+        key: String,
+        /// Value to set (omit with --unset)
+        #[arg(required_unless_present = "unset")]
+        value: Option<String>,
+        /// Remove/unset the value (for optional keys)
+        #[arg(long)]
+        unset: bool,
     },
 }
