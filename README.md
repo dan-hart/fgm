@@ -66,7 +66,7 @@ https://www.figma.com/developers/api#access-tokens
 ### Token Storage (Priority Order)
 
 1. `FIGMA_TOKEN` environment variable
-2. Config file `~/.config/fgm/config.toml`
+2. Config file (see `fgm config path` for your OS; macOS uses `~/Library/Application Support/fgm/config.toml`)
 3. System keychain (macOS Keychain / Linux Secret Service)
 
 ```bash
@@ -369,7 +369,7 @@ fgm export file abc123 --node "1:2"
 
 ## Configuration
 
-Optional config file at `~/.config/fgm/config.toml` (also used for token storage by default):
+Config file path is OS-specific (run `fgm config path` to see it). Example:
 
 ```toml
 figma_token = "figd_..."

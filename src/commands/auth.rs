@@ -63,8 +63,11 @@ async fn login(store_in_keychain_only: bool) -> Result<()> {
         } else {
             // Default to config file storage to avoid keychain prompts
             store_token_in_config(&token)?;
-            output::print_warning("Token stored in config file (~/.config/fgm/config.toml).");
-            output::print_warning("Config file storage is less secure than keychain.");
+            let config_path = Config::config_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.config/fgm/config.toml".to_string());
+            output::print_success(&format!("Token stored in config file ({}).", config_path));
+            output::print_warning("Config file storage is plaintext. Keep this file secure.");
         }
 
         match get_token_with_source() {

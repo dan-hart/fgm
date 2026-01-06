@@ -24,7 +24,7 @@ impl std::fmt::Display for TokenSource {
         match self {
             TokenSource::Environment => write!(f, "environment variable (FIGMA_TOKEN)"),
             TokenSource::Keychain => write!(f, "system keychain"),
-            TokenSource::ConfigFile => write!(f, "config file (~/.config/fgm/config.toml)"),
+            TokenSource::ConfigFile => write!(f, "config file"),
         }
     }
 }

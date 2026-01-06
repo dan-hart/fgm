@@ -16,7 +16,8 @@ Requires a Figma Personal Access Token (PAT). Get one at:
 https://www.figma.com/developers/api#access-tokens
 
 Set via FIGMA_TOKEN environment variable or run 'fgm auth login' to store
-in your config file by default. Use --keychain to store in the system keychain.")]
+in your config file by default. Use --keychain to store in the system keychain.
+Use --no-keychain to avoid OS prompts.")]
 #[command(after_help = "GETTING STARTED:
     fgm auth login                              Store your Figma token
     fgm files get <URL>                         Get file info from URL
@@ -26,6 +27,11 @@ COMMON WORKFLOWS:
     fgm export file <URL> --platform ios        Export for iOS (@1x, @2x, @3x)
     fgm compare-url <URL> screenshot.png        Compare Figma to screenshot
     fgm tokens export <key> --format css        Export design tokens to CSS
+
+AUTH QUICKSTART:
+    fgm auth login                              Store token in config file
+    fgm auth login --keychain                   Store token in keychain (opt-in)
+    fgm --no-keychain auth status               Check auth without keychain
 
 Learn more: https://github.com/dan-hart/fgm")]
 #[command(propagate_version = true)]
@@ -163,6 +169,12 @@ MANIFEST FORMAT:
     },
 
     /// Manage CLI configuration
+    #[command(after_help = "EXAMPLES:
+    fgm config path
+    fgm config show
+    fgm config get defaults.output_format
+    fgm config set defaults.output_format table
+    fgm config set defaults.team_id 123456789")]
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -172,36 +184,58 @@ MANIFEST FORMAT:
 // Auth subcommands
 #[derive(Subcommand)]
 pub enum AuthCommands {
-    /// Store your Figma Personal Access Token securely
+    /// Store your Figma Personal Access Token
     #[command(long_about = "Store your Figma Personal Access Token in the config file by default.
 
 Opens your browser to the Figma token creation page, then prompts you to
 paste your token. By default, the token is stored in:
-  - ~/.config/fgm/config.toml (plaintext)
+  - the fgm config file (plaintext)
 
 Use --keychain to store it securely in:
   - macOS: Keychain
   - Linux: Secret Service (GNOME Keyring, KWallet)
 
-Token priority: FIGMA_TOKEN env var > Config file > Keychain")]
+Token priority: FIGMA_TOKEN env var > Config file > Keychain
+
+To avoid OS prompts, use --no-keychain.")]
+    #[command(after_help = "EXAMPLES:
+    # Store token in config file (default)
+    fgm auth login
+
+    # Store token in keychain (secure, opt-in)
+    fgm auth login --keychain
+
+    # Disable keychain access for this run
+    fgm --no-keychain auth login")]
     Login {
         /// Store token in keychain (secure)
-        #[arg(long, help = "Store token in keychain (secure)")]
+        #[arg(long, help = "Store token in keychain (secure, optional)")]
         keychain: bool,
     },
 
     /// Remove stored authentication token
-    #[command(long_about = "Remove your Figma token from the system keychain.
+    #[command(long_about = "Remove your Figma token from local storage.
 
-This does not revoke the token on Figma's side. To fully revoke access,
-visit: https://www.figma.com/settings → Personal access tokens")]
+Removes any token stored in the config file and, if enabled, from the
+system keychain. This does not revoke the token on Figma's side.
+
+To fully revoke access, visit:
+  https://www.figma.com/settings → Personal access tokens")]
+    #[command(after_help = "EXAMPLES:
+    fgm auth logout
+    fgm --no-keychain auth logout")]
     Logout,
 
     /// Check current authentication status
     #[command(long_about = "Verify your Figma authentication is working.
 
 Checks for a valid token and tests it against the Figma API.
-Shows which token source is being used (env var, keychain, or config).")]
+Shows which token source is being used.
+
+Token priority: FIGMA_TOKEN env var > Config file > Keychain")]
+    #[command(after_help = "EXAMPLES:
+    fgm auth status
+    fgm --no-keychain auth status")]
     Status,
 
     /// Debug authentication issues (keychain, env vars, config)
@@ -209,10 +243,13 @@ Shows which token source is being used (env var, keychain, or config).")]
 
 Tests each token source individually and reports detailed information:
   - Environment variable (FIGMA_TOKEN)
-  - System keychain status and accessibility
+  - System keychain status and accessibility (if enabled)
   - Config file token storage
 
 Use this when 'fgm auth login' succeeds but 'fgm auth status' fails.")]
+    #[command(after_help = "EXAMPLES:
+    fgm auth debug
+    fgm --no-keychain auth debug")]
     Debug,
 }
 
