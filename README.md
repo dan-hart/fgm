@@ -405,7 +405,11 @@ For large exports, consider using `--all-frames` with a smaller file or exportin
 
 - Tokens are stored in the config file by default (plaintext) or optionally in your system keychain
 - `git-secrets` hooks prevent accidental credential commits
+- ASP preflight checks are available at `./scripts/utilities/asp-preflight.sh`
+- Install combined ASP + git-secrets pre-commit hook with `./scripts/automation/install-asp-hooks.sh . --force`
+- Run `./scripts/utilities/asp-preflight.sh --staged --strict` before commits
 - `.gitignore` patterns block common credential files
+- ASP policy and checklist are documented in `docs/security/ai-safety-policy.md` and `docs/security/asp-preflight-checklist.md`
 
 ## Development
 

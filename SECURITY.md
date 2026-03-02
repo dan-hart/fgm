@@ -29,3 +29,6 @@ When using fgm:
 - If using environment variables, set `FIGMA_TOKEN` in your shell session, not in committed config files
 - The `.gitignore` includes patterns to prevent accidental credential commits
 - `git-secrets` hooks are configured to catch common token patterns
+- Run ASP preflight before commit: `./scripts/utilities/asp-preflight.sh --staged --strict`
+- Install ASP + git-secrets pre-commit checks: `./scripts/automation/install-asp-hooks.sh . --force`
+- Follow repository ASP policy: `docs/security/ai-safety-policy.md`
