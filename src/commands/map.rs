@@ -11,10 +11,17 @@ use std::path::Path;
 
 pub async fn run(command: MapCommands) -> Result<()> {
     match command {
-        MapCommands::Init { file_key_or_url, output } => init(&file_key_or_url, &output).await,
+        MapCommands::Init {
+            file_key_or_url,
+            output,
+        } => init(&file_key_or_url, &output).await,
         MapCommands::Coverage { map } => coverage(&map),
         MapCommands::Update { map } => update(&map).await,
-        MapCommands::Link { component, code_path, map } => link(&component, &code_path, &map),
+        MapCommands::Link {
+            component,
+            code_path,
+            map,
+        } => link(&component, &code_path, &map),
     }
 }
 
@@ -139,26 +146,42 @@ fn coverage(map_path: &Path) -> Result<()> {
     let content = fs::read_to_string(map_path)?;
     let map: ComponentMap = toml::from_str(&content)?;
 
-    output::print_status(&format!("Component Coverage: {}", map.figma.file_name).bold().to_string());
+    output::print_status(
+        &format!("Component Coverage: {}", map.figma.file_name)
+            .bold()
+            .to_string(),
+    );
     output::print_status(&format!("  Last synced: {}", map.figma.last_sync));
     output::print_status("");
 
     let total = map.components.len();
-    let implemented: Vec<_> = map.components.values()
+    let implemented: Vec<_> = map
+        .components
+        .values()
         .filter(|c| c.status == ComponentStatus::Implemented)
         .collect();
-    let in_progress: Vec<_> = map.components.values()
+    let in_progress: Vec<_> = map
+        .components
+        .values()
         .filter(|c| c.status == ComponentStatus::InProgress)
         .collect();
-    let needs_update: Vec<_> = map.components.values()
+    let needs_update: Vec<_> = map
+        .components
+        .values()
         .filter(|c| c.status == ComponentStatus::NeedsUpdate)
         .collect();
-    let not_started: Vec<_> = map.components.values()
+    let not_started: Vec<_> = map
+        .components
+        .values()
         .filter(|c| c.status == ComponentStatus::NotStarted)
         .collect();
 
     // Coverage bar
-    let pct = if total > 0 { (implemented.len() * 100) / total } else { 0 };
+    let pct = if total > 0 {
+        (implemented.len() * 100) / total
+    } else {
+        0
+    };
     let bar_width = 30;
     let filled = (pct * bar_width) / 100;
     let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
@@ -288,20 +311,22 @@ fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
     let mut map: ComponentMap = toml::from_str(&content)?;
 
     // Find component by key or name
-    let key = map.components.iter()
+    let key = map
+        .components
+        .iter()
         .find(|(k, v)| *k == component || v.figma_name == component)
         .map(|(k, _)| k.clone());
 
     let key = key.ok_or_else(|| {
-        anyhow::anyhow!("Component '{}' not found in map. Use 'fgm map coverage' to see available components.", component)
+        anyhow::anyhow!(
+            "Component '{}' not found in map. Use 'fgm map coverage' to see available components.",
+            component
+        )
     })?;
 
     // Verify code path exists
     if !code_path.exists() {
-        output::print_warning(&format!(
-            "{} does not exist yet",
-            code_path.display()
-        ));
+        output::print_warning(&format!("{} does not exist yet", code_path.display()));
     }
 
     // Update the entry
@@ -321,8 +346,14 @@ fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
 }
 
 /// Extract COMPONENT nodes from document tree
-fn extract_components(document: &crate::api::types::Document, components: &mut HashMap<String, ComponentEntry>) {
-    fn visit_node(node: &crate::api::types::Node, components: &mut HashMap<String, ComponentEntry>) {
+fn extract_components(
+    document: &crate::api::types::Document,
+    components: &mut HashMap<String, ComponentEntry>,
+) {
+    fn visit_node(
+        node: &crate::api::types::Node,
+        components: &mut HashMap<String, ComponentEntry>,
+    ) {
         if node.node_type == "COMPONENT" || node.node_type == "COMPONENT_SET" {
             components.insert(
                 node.id.clone(),

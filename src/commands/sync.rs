@@ -13,7 +13,11 @@ pub async fn run(args: SyncArgs) -> Result<()> {
     let content = fs::read_to_string(&args.manifest)?;
     let manifest: SyncManifest = toml::from_str(&content)?;
 
-    output::print_status(&format!("Asset Sync: {}", manifest.project.name).bold().to_string());
+    output::print_status(
+        &format!("Asset Sync: {}", manifest.project.name)
+            .bold()
+            .to_string(),
+    );
 
     if args.dry_run {
         output::print_status(&"(Dry run - no files will be modified)".yellow().to_string());
@@ -81,7 +85,16 @@ pub async fn run(args: SyncArgs) -> Result<()> {
             continue;
         }
 
-        match export_asset(&client, &parsed.file_key, &node_id, format, scale, &output_path).await {
+        match export_asset(
+            &client,
+            &parsed.file_key,
+            &node_id,
+            format,
+            scale,
+            &output_path,
+        )
+        .await
+        {
             Ok(_) => {
                 output::print_status(&format!("    {} {}", "✓".green(), output_path.display()));
                 synced += 1;
@@ -106,7 +119,11 @@ pub async fn run(args: SyncArgs) -> Result<()> {
 
     if args.dry_run {
         output::print_status("");
-        output::print_status(&"Run without --dry-run to apply changes".yellow().to_string());
+        output::print_status(
+            &"Run without --dry-run to apply changes"
+                .yellow()
+                .to_string(),
+        );
     }
 
     if errors > 0 {
@@ -149,8 +166,15 @@ async fn export_asset(
     Ok(())
 }
 
-fn resolve_output_path(base_dir: &Option<String>, asset_output: &Option<String>, name: &str) -> PathBuf {
-    let base = base_dir.as_ref().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+fn resolve_output_path(
+    base_dir: &Option<String>,
+    asset_output: &Option<String>,
+    name: &str,
+) -> PathBuf {
+    let base = base_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
 
     if let Some(output) = asset_output {
         if Path::new(output).is_absolute() {

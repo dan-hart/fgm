@@ -17,11 +17,17 @@ pub async fn run(command: FilesCommands) -> Result<()> {
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
             get(&client, &parsed.file_key).await
         }
-        FilesCommands::Tree { file_key_or_url, depth } => {
+        FilesCommands::Tree {
+            file_key_or_url,
+            depth,
+        } => {
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
             tree(&client, &parsed.file_key, depth).await
         }
-        FilesCommands::Versions { file_key_or_url, limit } => {
+        FilesCommands::Versions {
+            file_key_or_url,
+            limit,
+        } => {
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
             versions(&client, &parsed.file_key, limit).await
         }
@@ -48,7 +54,11 @@ async fn list(client: &FigmaClient, project: Option<String>, team: Option<String
             };
             output::print_json(&out)?;
         } else {
-            output::print_status(&format!("Files in project {}:", project_id).bold().to_string());
+            output::print_status(
+                &format!("Files in project {}:", project_id)
+                    .bold()
+                    .to_string(),
+            );
             output::print_table(&rows);
         }
     } else if let Some(team_id) = team {
@@ -119,7 +129,14 @@ async fn tree(client: &FigmaClient, file_key: &str, depth: u32) -> Result<()> {
     Ok(())
 }
 
-fn print_node(name: &str, id: &str, node_type: &str, current_depth: u32, max_depth: u32, children: &Option<Vec<crate::api::types::Node>>) {
+fn print_node(
+    name: &str,
+    id: &str,
+    node_type: &str,
+    current_depth: u32,
+    max_depth: u32,
+    children: &Option<Vec<crate::api::types::Node>>,
+) {
     let indent = "  ".repeat(current_depth as usize);
     output::print_status(&format!(
         "{}{} ({}) [{}]",
@@ -132,7 +149,14 @@ fn print_node(name: &str, id: &str, node_type: &str, current_depth: u32, max_dep
     if current_depth < max_depth {
         if let Some(children) = children {
             for child in children {
-                print_node(&child.name, &child.id, &child.node_type, current_depth + 1, max_depth, &child.children);
+                print_node(
+                    &child.name,
+                    &child.id,
+                    &child.node_type,
+                    current_depth + 1,
+                    max_depth,
+                    &child.children,
+                );
             }
         }
     }
@@ -255,11 +279,7 @@ impl TreeNode {
         }
     }
 
-    fn from_node(
-        node: &crate::api::types::Node,
-        current_depth: u32,
-        max_depth: u32,
-    ) -> Self {
+    fn from_node(node: &crate::api::types::Node, current_depth: u32, max_depth: u32) -> Self {
         let children = if current_depth < max_depth {
             node.children
                 .as_ref()

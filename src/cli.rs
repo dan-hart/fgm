@@ -19,6 +19,7 @@ Set via FIGMA_TOKEN environment variable or run 'fgm auth login' to store
 in your config file by default. Use --keychain to store in the system keychain.
 Use --no-keychain to avoid OS prompts.")]
 #[command(after_help = "GETTING STARTED:
+    fgm <URL>                                   Quick export all top-level frames
     fgm auth login                              Store your Figma token
     fgm files get <URL>                         Get file info from URL
     fgm export file <URL> -o ./out/             Export assets to directory
@@ -43,10 +44,22 @@ pub struct Cli {
     #[arg(long, global = true, conflicts_with = "format", help = "Output JSON")]
     pub json: bool,
     /// Suppress non-error output
-    #[arg(short, long, global = true, conflicts_with = "verbose", help = "Quiet mode")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        conflicts_with = "verbose",
+        help = "Quiet mode"
+    )]
     pub quiet: bool,
     /// Enable verbose output
-    #[arg(short, long, global = true, conflicts_with = "quiet", help = "Verbose mode")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        conflicts_with = "quiet",
+        help = "Verbose mode"
+    )]
     pub verbose: bool,
     /// Disable colored output
     #[arg(long, global = true, help = "Disable colored output")]
@@ -94,12 +107,14 @@ Exit code is 1 if difference exceeds threshold (for CI integration).")]
 
     /// Export from Figma URL and compare against a screenshot in one step
     #[command(name = "compare-url")]
-    #[command(long_about = "Export a Figma frame and compare it against a local screenshot.
+    #[command(
+        long_about = "Export a Figma frame and compare it against a local screenshot.
 
 This is a convenience command that combines 'export' and 'compare' into one step.
 The Figma URL must include a node-id parameter to specify which frame to export.
 
-Exit code is 1 if difference exceeds threshold (for CI integration).")]
+Exit code is 1 if difference exceeds threshold (for CI integration)."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm compare-url \"https://figma.com/design/abc?node-id=1-2\" screenshot.png
     fgm compare-url \"https://figma.com/design/abc?node-id=1-2\" dev.png --threshold 3
@@ -119,10 +134,12 @@ Exit code is 1 if difference exceeds threshold (for CI integration).")]
     },
 
     /// Preview a Figma frame directly in terminal
-    #[command(long_about = "Display a Figma frame as an image directly in your terminal.
+    #[command(
+        long_about = "Display a Figma frame as an image directly in your terminal.
 
 Supports iTerm2, Kitty, WezTerm, Ghostty, and terminals with Sixel support.
-Protocol is auto-detected, or can be forced with --protocol.")]
+Protocol is auto-detected, or can be forced with --protocol."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm preview abc123
     fgm preview abc123 --node \"1:2\"
@@ -136,10 +153,12 @@ Protocol is auto-detected, or can be forced with --protocol.")]
     },
 
     /// Sync assets declaratively from a TOML manifest
-    #[command(long_about = "Download and sync assets defined in a TOML manifest file.
+    #[command(
+        long_about = "Download and sync assets defined in a TOML manifest file.
 
 The manifest defines which Figma frames to export and where to save them.
-Useful for keeping local assets in sync with Figma designs.")]
+Useful for keeping local assets in sync with Figma designs."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm sync figma-assets.toml
     fgm sync figma-assets.toml --dry-run
@@ -179,13 +198,18 @@ MANIFEST FORMAT:
         #[command(subcommand)]
         command: ConfigCommands,
     },
+
+    /// Quick export mode: fgm "<figma-url-or-file-key>"
+    #[command(external_subcommand)]
+    Quick(Vec<String>),
 }
 
 // Auth subcommands
 #[derive(Subcommand)]
 pub enum AuthCommands {
     /// Store your Figma Personal Access Token
-    #[command(long_about = "Store your Figma Personal Access Token in the config file by default.
+    #[command(
+        long_about = "Store your Figma Personal Access Token in the config file by default.
 
 Opens your browser to the Figma token creation page, then prompts you to
 paste your token. By default, the token is stored in:
@@ -197,7 +221,8 @@ Use --keychain to store it securely in:
 
 Token priority: FIGMA_TOKEN env var > Config file > Keychain
 
-To avoid OS prompts, use --no-keychain.")]
+To avoid OS prompts, use --no-keychain."
+    )]
     #[command(after_help = "EXAMPLES:
     # Store token in config file (default)
     fgm auth login
@@ -306,7 +331,12 @@ Use --depth to control how deep into the tree to display.")]
         /// Figma file key or URL
         file_key_or_url: String,
         /// Maximum depth to display (default: 3)
-        #[arg(short, long, default_value = "3", help = "How many levels deep to show")]
+        #[arg(
+            short,
+            long,
+            default_value = "3",
+            help = "How many levels deep to show"
+        )]
         depth: u32,
     },
 
@@ -322,7 +352,12 @@ Useful for tracking design changes over time.")]
         /// Figma file key or URL
         file_key_or_url: String,
         /// Number of versions to show (default: 10)
-        #[arg(short, long, default_value = "10", help = "How many versions to display")]
+        #[arg(
+            short,
+            long,
+            default_value = "10",
+            help = "How many versions to display"
+        )]
         limit: u32,
     },
 }
@@ -336,7 +371,8 @@ pub enum ExportCommands {
 You can export specific nodes by ID, or use --all-frames to export all
 top-level frames in the file. Supports PNG, SVG, PDF, and JPG formats.
 
-Use --platform to generate all required sizes for iOS, Android, or Web.")]
+Use --platform to generate all required sizes for iOS, Android, or Web.
+Use --llm-pack to emit a manifest.json for LLM workflows.")]
     #[command(after_help = "EXAMPLES:
     # Export a single node from URL
     fgm export file \"https://figma.com/design/abc?node-id=1-2\" -o ./out/
@@ -360,7 +396,12 @@ Use --platform to generate all required sizes for iOS, Android, or Web.")]
         #[arg(help = "File key (abc123) or URL with optional ?node-id=")]
         file_key_or_url: String,
         /// Node IDs to export (can specify multiple: --node \"1:2\" --node \"1:3\")
-        #[arg(short, long, conflicts_with = "all_frames", help = "Node ID to export (repeatable)")]
+        #[arg(
+            short,
+            long,
+            conflicts_with = "all_frames",
+            help = "Node ID to export (repeatable)"
+        )]
         node: Vec<String>,
         /// Export all top-level frames in the file
         #[arg(long, conflicts_with = "node", help = "Export every top-level frame")]
@@ -385,6 +426,23 @@ Use --platform to generate all required sizes for iOS, Android, or Web.")]
         /// Generate platform-specific sizes (ios, android, web)
         #[arg(long, help = "Export all sizes for platform")]
         platform: Option<Platform>,
+        /// Emit an LLM-focused manifest JSON alongside exported images
+        #[arg(long, help = "Write manifest JSON with metadata for LLM workflows")]
+        llm_pack: bool,
+        /// Manifest filename for --llm-pack
+        #[arg(
+            long,
+            default_value = "manifest.json",
+            requires = "llm_pack",
+            help = "Manifest filename when --llm-pack is enabled"
+        )]
+        manifest_name: String,
+        /// Skip rewriting image files when content is unchanged
+        #[arg(long, help = "Resume mode: skip unchanged files")]
+        resume: bool,
+        /// Apply a preset export profile
+        #[arg(long, value_enum, help = "Export profile preset")]
+        profile: Option<ExportProfile>,
     },
 
     /// Batch export from a TOML manifest file
@@ -416,7 +474,7 @@ EXAMPLE:
     },
 }
 
-#[derive(Clone, clap::ValueEnum)]
+#[derive(Debug, Clone, clap::ValueEnum)]
 pub enum ExportFormat {
     Png,
     Svg,
@@ -445,6 +503,12 @@ impl ExportFormat {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum ExportProfile {
+    /// Pixel-perfect defaults for design-to-LLM pipelines
+    PixelPerfect,
 }
 
 // Compare arguments
@@ -502,9 +566,11 @@ Colors are extracted from published styles in the file.")]
     },
 
     /// List typography styles from a Figma file
-    #[command(long_about = "Extract all text/typography styles defined in the Figma file.
+    #[command(
+        long_about = "Extract all text/typography styles defined in the Figma file.
 
-Shows font family, size, weight, and line height for each style.")]
+Shows font family, size, weight, and line height for each style."
+    )]
     Typography {
         /// Figma file key or URL
         #[arg(help = "File key (abc123) or Figma URL")]
@@ -523,10 +589,12 @@ Useful for building a spacing scale.")]
     },
 
     /// Export all design tokens to a file
-    #[command(long_about = "Export all design tokens to JSON, CSS, Swift, or Kotlin format.
+    #[command(
+        long_about = "Export all design tokens to JSON, CSS, Swift, or Kotlin format.
 
 Combines colors, typography, and spacing into a single output file.
-Useful for syncing design tokens to code.")]
+Useful for syncing design tokens to code."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm tokens export abc123 --format json -o tokens.json
     fgm tokens export abc123 --format css -o tokens.css
@@ -557,12 +625,14 @@ pub enum TokenFormat {
 #[derive(Subcommand)]
 pub enum ComponentsCommands {
     /// List all published components in a team library
-    #[command(long_about = "List all components published to a team's component library.
+    #[command(
+        long_about = "List all components published to a team's component library.
 
 Requires a team with a published component library. Shows component name,
 key, description, and metadata.
 
-Find your team ID in your Figma URL: figma.com/files/team/TEAM_ID/...")]
+Find your team ID in your Figma URL: figma.com/files/team/TEAM_ID/..."
+    )]
     #[command(after_help = "EXAMPLE:
     fgm components list 123456789")]
     List {
@@ -572,10 +642,12 @@ Find your team ID in your Figma URL: figma.com/files/team/TEAM_ID/...")]
     },
 
     /// Get detailed info about a specific component
-    #[command(long_about = "Retrieve detailed information about a published component.
+    #[command(
+        long_about = "Retrieve detailed information about a published component.
 
 Shows component name, description, containing frame/page, and timestamps.
-The component key can be found in the component panel or via 'components list'.")]
+The component key can be found in the component panel or via 'components list'."
+    )]
     Get {
         /// Component key from Figma
         #[arg(help = "Component key (from Figma or 'components list')")]
@@ -666,10 +738,12 @@ pub struct CompareUrlArgs {
 #[derive(Subcommand)]
 pub enum SnapshotCommands {
     /// Capture current design state as a named snapshot
-    #[command(long_about = "Export and save the current state of a Figma file as a snapshot.
+    #[command(
+        long_about = "Export and save the current state of a Figma file as a snapshot.
 
 Snapshots are saved to a directory with metadata and exported images.
-Use snapshots to track design changes over time and compare versions.")]
+Use snapshots to track design changes over time and compare versions."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm snapshot create abc123 --name v1.0
     fgm snapshot create abc123 --name sprint-5 --node \"1:2\" --node \"1:3\"
@@ -685,7 +759,12 @@ Use snapshots to track design changes over time and compare versions.")]
         #[arg(long, help = "Node IDs to include (repeatable)")]
         node: Vec<String>,
         /// Directory to store snapshots
-        #[arg(short, long, default_value = ".fgm-snapshots", help = "Snapshot storage directory")]
+        #[arg(
+            short,
+            long,
+            default_value = ".fgm-snapshots",
+            help = "Snapshot storage directory"
+        )]
         output: PathBuf,
     },
 
@@ -695,7 +774,12 @@ Use snapshots to track design changes over time and compare versions.")]
 Displays snapshot name, creation date, file info, and node count.")]
     List {
         /// Snapshots directory to scan
-        #[arg(short, long, default_value = ".fgm-snapshots", help = "Snapshot storage directory")]
+        #[arg(
+            short,
+            long,
+            default_value = ".fgm-snapshots",
+            help = "Snapshot storage directory"
+        )]
         dir: PathBuf,
     },
 
@@ -715,7 +799,12 @@ Optionally generates visual diff images for changed frames.")]
         #[arg(help = "Comparison snapshot name")]
         to: String,
         /// Snapshots directory
-        #[arg(short, long, default_value = ".fgm-snapshots", help = "Snapshot storage directory")]
+        #[arg(
+            short,
+            long,
+            default_value = ".fgm-snapshots",
+            help = "Snapshot storage directory"
+        )]
         dir: PathBuf,
         /// Save diff images to this directory
         #[arg(short, long, help = "Generate visual diff images")]
@@ -741,10 +830,12 @@ pub struct SyncArgs {
 #[derive(Subcommand)]
 pub enum MapCommands {
     /// Initialize a component map file from Figma components
-    #[command(long_about = "Create a new component map by extracting components from a Figma file.
+    #[command(
+        long_about = "Create a new component map by extracting components from a Figma file.
 
 The map tracks which Figma components have been implemented in code.
-This is the first step in setting up design-to-code tracking.")]
+This is the first step in setting up design-to-code tracking."
+    )]
     #[command(after_help = "EXAMPLE:
     fgm map init abc123
     fgm map init \"https://figma.com/design/abc123/File\" -o my-components.toml")]
@@ -753,7 +844,12 @@ This is the first step in setting up design-to-code tracking.")]
         #[arg(help = "File key (abc123) or Figma URL")]
         file_key_or_url: String,
         /// Output file path
-        #[arg(short, long, default_value = "figma-components.toml", help = "Where to save the component map")]
+        #[arg(
+            short,
+            long,
+            default_value = "figma-components.toml",
+            help = "Where to save the component map"
+        )]
         output: PathBuf,
     },
 
@@ -767,29 +863,43 @@ and identifies components that may need updates.")]
     fgm map coverage -m ./design-system.toml")]
     Coverage {
         /// Component map file
-        #[arg(short, long, default_value = "figma-components.toml", help = "Path to component map")]
+        #[arg(
+            short,
+            long,
+            default_value = "figma-components.toml",
+            help = "Path to component map"
+        )]
         map: PathBuf,
     },
 
     /// Update component map with latest components from Figma
-    #[command(long_about = "Sync the component map with the current state of the Figma file.
+    #[command(
+        long_about = "Sync the component map with the current state of the Figma file.
 
 Adds new components, removes deleted ones, and flags components
-that have been modified since last sync.")]
+that have been modified since last sync."
+    )]
     #[command(after_help = "EXAMPLE:
     fgm map update
     fgm map update -m ./design-system.toml")]
     Update {
         /// Component map file
-        #[arg(short, long, default_value = "figma-components.toml", help = "Path to component map")]
+        #[arg(
+            short,
+            long,
+            default_value = "figma-components.toml",
+            help = "Path to component map"
+        )]
         map: PathBuf,
     },
 
     /// Link a Figma component to its code implementation
-    #[command(long_about = "Mark a component as implemented by linking it to a code file.
+    #[command(
+        long_about = "Mark a component as implemented by linking it to a code file.
 
 This updates the component map to track which code file implements
-the Figma component, enabling coverage tracking.")]
+the Figma component, enabling coverage tracking."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm map link \"Button/Primary\" ./src/components/Button.tsx
     fgm map link \"Icon/Search\" ./src/icons/SearchIcon.vue -m design.toml")]
@@ -801,7 +911,12 @@ the Figma component, enabling coverage tracking.")]
         #[arg(help = "Path to implementation file")]
         code_path: PathBuf,
         /// Component map file
-        #[arg(short, long, default_value = "figma-components.toml", help = "Path to component map")]
+        #[arg(
+            short,
+            long,
+            default_value = "figma-components.toml",
+            help = "Path to component map"
+        )]
         map: PathBuf,
     },
 }
@@ -821,12 +936,14 @@ pub enum Platform {
 #[derive(Subcommand)]
 pub enum CacheCommands {
     /// Prefetch all data for a Figma file (warm the cache)
-    #[command(long_about = "Warm the cache by fetching all data for a Figma file upfront.
+    #[command(
+        long_about = "Warm the cache by fetching all data for a Figma file upfront.
 
 This downloads file metadata, version history, and optionally image URLs.
 Run this before batch operations to minimize API calls and avoid rate limits.
 
-Cache is stored in ~/.cache/fgm/ and persists between sessions.")]
+Cache is stored in ~/.cache/fgm/ and persists between sessions."
+    )]
     #[command(after_help = "EXAMPLES:
     fgm cache warmup abc123
     fgm cache warmup \"https://figma.com/design/abc123/File\"
@@ -876,6 +993,62 @@ mod tests {
         assert!(help.contains("--format"));
         assert!(help.contains("--json"));
         assert!(help.contains("--no-color"));
+    }
+
+    #[test]
+    fn parses_quick_mode_url() {
+        let cli = Cli::try_parse_from([
+            "fgm",
+            "https://www.figma.com/design/abc123/File?node-id=1-2",
+        ])
+        .expect("quick mode should parse");
+
+        match cli.command {
+            Commands::Quick(args) => {
+                assert_eq!(args.len(), 1);
+                assert_eq!(
+                    args[0],
+                    "https://www.figma.com/design/abc123/File?node-id=1-2"
+                );
+            }
+            _ => panic!("expected quick mode"),
+        }
+    }
+
+    #[test]
+    fn parses_subcommands_without_quick_mode() {
+        let cli = Cli::try_parse_from(["fgm", "files", "get", "abc123"]).expect("should parse");
+        match cli.command {
+            Commands::Files {
+                command: FilesCommands::Get { file_key_or_url },
+            } => {
+                assert_eq!(file_key_or_url, "abc123");
+            }
+            _ => panic!("expected files get command"),
+        }
+    }
+
+    #[test]
+    fn parses_export_profile_flag() {
+        let cli = Cli::try_parse_from([
+            "fgm",
+            "export",
+            "file",
+            "abc123",
+            "--all-frames",
+            "--profile",
+            "pixel-perfect",
+        ])
+        .expect("should parse profile");
+
+        match cli.command {
+            Commands::Export {
+                command: ExportCommands::File { profile, .. },
+            } => {
+                assert!(matches!(profile, Some(ExportProfile::PixelPerfect)));
+            }
+            _ => panic!("expected export file"),
+        }
     }
 }
 

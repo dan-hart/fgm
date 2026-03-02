@@ -18,7 +18,12 @@ pub async fn run(command: SnapshotCommands) -> Result<()> {
             output,
         } => create(&file_key_or_url, &name, &node, &output).await,
         SnapshotCommands::List { dir } => list(&dir),
-        SnapshotCommands::Diff { from, to, dir, output } => diff(&from, &to, &dir, output.as_deref()).await,
+        SnapshotCommands::Diff {
+            from,
+            to,
+            dir,
+            output,
+        } => diff(&from, &to, &dir, output.as_deref()).await,
     }
 }
 
@@ -61,7 +66,11 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
     let snapshot_dir = output.join(name);
     fs::create_dir_all(&snapshot_dir)?;
 
-    output::print_status(&format!("Creating snapshot '{}'...", name).bold().to_string());
+    output::print_status(
+        &format!("Creating snapshot '{}'...", name)
+            .bold()
+            .to_string(),
+    );
 
     // Get file info to find frames
     let file = client.get_file(file_key).await?;
@@ -106,7 +115,10 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
             let filepath = snapshot_dir.join(&filename);
             fs::write(&filepath, bytes)?;
 
-            let node_name = name_lookup.get(&node_id).cloned().unwrap_or_else(|| node_id.clone());
+            let node_name = name_lookup
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(|| node_id.clone());
             output::print_status(&format!("  {} {}", "✓".green(), node_name));
 
             snapshots.push(NodeSnapshot {
@@ -140,10 +152,7 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
 
 fn list(dir: &Path) -> Result<()> {
     if !dir.exists() {
-        output::print_warning(&format!(
-            "No snapshots directory at {}",
-            dir.display()
-        ));
+        output::print_warning(&format!("No snapshots directory at {}", dir.display()));
         return Ok(());
     }
 
@@ -192,12 +201,24 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
     }
 
     // Load metadata
-    let from_meta: SnapshotMeta = serde_json::from_str(&fs::read_to_string(from_dir.join("snapshot.json"))?)?;
-    let to_meta: SnapshotMeta = serde_json::from_str(&fs::read_to_string(to_dir.join("snapshot.json"))?)?;
+    let from_meta: SnapshotMeta =
+        serde_json::from_str(&fs::read_to_string(from_dir.join("snapshot.json"))?)?;
+    let to_meta: SnapshotMeta =
+        serde_json::from_str(&fs::read_to_string(to_dir.join("snapshot.json"))?)?;
 
-    output::print_status(&format!("Comparing '{}' → '{}'", from, to).bold().to_string());
-    output::print_status(&format!("  From: {} ({})", from_meta.name, from_meta.created_at));
-    output::print_status(&format!("  To:   {} ({})", to_meta.name, to_meta.created_at));
+    output::print_status(
+        &format!("Comparing '{}' → '{}'", from, to)
+            .bold()
+            .to_string(),
+    );
+    output::print_status(&format!(
+        "  From: {} ({})",
+        from_meta.name, from_meta.created_at
+    ));
+    output::print_status(&format!(
+        "  To:   {} ({})",
+        to_meta.name, to_meta.created_at
+    ));
     output::print_status("");
 
     // Create output directory if specified
@@ -244,7 +265,8 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
                 if let Some(out_dir) = diff_output {
                     let diff_img =
                         crate::commands::compare::generate_diff_image(&from_img, &to_img, 10);
-                    let diff_path = out_dir.join(format!("{}-diff.png", from_node.id.replace(':', "-")));
+                    let diff_path =
+                        out_dir.join(format!("{}-diff.png", from_node.id.replace(':', "-")));
                     diff_img.save(&diff_path)?;
                 }
             } else {

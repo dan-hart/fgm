@@ -391,7 +391,10 @@ fn pixels_similar(p1: &Rgba<u8>, p2: &Rgba<u8>, tolerance: u8) -> bool {
 
 fn is_image(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp"),
+        Some(ext) => matches!(
+            ext.to_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp"
+        ),
         None => false,
     }
 }

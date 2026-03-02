@@ -78,10 +78,7 @@ async fn login(store_in_keychain_only: bool) -> Result<()> {
                 ));
             }
             Err(e) => {
-                output::print_warning(&format!(
-                    "Could not verify token retrieval: {}",
-                    e
-                ));
+                output::print_warning(&format!("Could not verify token retrieval: {}", e));
                 output::print_status("Run 'fgm auth debug' to diagnose the issue.");
             }
         }
@@ -193,11 +190,7 @@ async fn debug() -> Result<()> {
                 match get_token_from_config() {
                     Ok(token) => {
                         let masked = mask_token(&token);
-                        output::print_status(&format!(
-                            "  Token: {} ({})",
-                            "FOUND".green(),
-                            masked
-                        ));
+                        output::print_status(&format!("  Token: {} ({})", "FOUND".green(), masked));
                     }
                     Err(_) => {
                         output::print_status(&format!("  Token: {}", "NOT SET".yellow()));
@@ -227,10 +220,7 @@ async fn debug() -> Result<()> {
         Err(e) => {
             output::print_status(&format!("  Active token: {}", "NONE".red()));
             output::print_status(&format!("  Error: {}", e));
-            output::print_status(&format!(
-                "  Status: {}",
-                "NOT AUTHENTICATED".red().bold()
-            ));
+            output::print_status(&format!("  Status: {}", "NOT AUTHENTICATED".red().bold()));
             output::print_status("");
             output::print_status(&"Troubleshooting:".bold().to_string());
             output::print_status("  1. Run 'fgm auth login' to store a new token");
@@ -253,9 +243,5 @@ fn mask_token(token: &str) -> String {
     if token.len() <= 12 {
         return "*".repeat(token.len());
     }
-    format!(
-        "{}...{}",
-        &token[..8],
-        &token[token.len() - 4..]
-    )
+    format!("{}...{}", &token[..8], &token[token.len() - 4..])
 }

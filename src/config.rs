@@ -138,7 +138,8 @@ impl Config {
 
     /// Save config to file
     pub fn save(&self) -> Result<()> {
-        let dir = Self::config_dir().ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
+        let dir = Self::config_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
         fs::create_dir_all(&dir)?;
 
         let path = dir.join("config.toml");

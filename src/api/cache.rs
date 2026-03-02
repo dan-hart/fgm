@@ -65,10 +65,16 @@ impl CacheKey {
     /// Create hash of export parameters
     pub fn hash_export_params(ids: &[String], format: &str, scale: f32) -> String {
         use std::collections::hash_map::DefaultHasher;
+        use std::collections::BTreeSet;
         use std::hash::{Hash, Hasher};
 
+        // Canonicalize IDs so equivalent requests with different ordering
+        // map to the same cache key.
+        let canonical_ids: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
         let mut hasher = DefaultHasher::new();
-        ids.hash(&mut hasher);
+        for id in canonical_ids {
+            id.hash(&mut hasher);
+        }
         format.hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -343,9 +349,9 @@ impl FigmaCache {
     }
 
     fn count_disk_entries(&self) -> usize {
-        self.disk_path
-            .as_ref()
-            .map_or(0, |path| fs::read_dir(path).map_or(0, |entries| entries.count()))
+        self.disk_path.as_ref().map_or(0, |path| {
+            fs::read_dir(path).map_or(0, |entries| entries.count())
+        })
     }
 }
 
@@ -416,5 +422,19 @@ mod tests {
 
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3); // Different order = different hash
+    }
+
+    #[test]
+    fn test_hash_export_params_canonicalizes_node_order() {
+        let ids1 = vec!["10:2".to_string(), "4:9".to_string(), "4:9".to_string()];
+        let ids2 = vec!["4:9".to_string(), "10:2".to_string()];
+        let ids3 = vec!["4:9".to_string(), "10:2".to_string(), "11:1".to_string()];
+
+        let h1 = CacheKey::hash_export_params(&ids1, "png", 2.0);
+        let h2 = CacheKey::hash_export_params(&ids2, "png", 2.0);
+        let h3 = CacheKey::hash_export_params(&ids3, "png", 2.0);
+
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
     }
 }

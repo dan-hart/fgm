@@ -1,7 +1,7 @@
 //! Figma API client with caching and rate limiting
 
-use super::cache::{create_shared_cache, FigmaCache, CacheStats};
-use super::rate_limit::RateLimiter;
+use super::cache::{create_shared_cache, CacheStats, FigmaCache};
+use super::rate_limit::{RateLimitTelemetry, RateLimiter};
 use anyhow::Result;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Response, StatusCode};
@@ -19,6 +19,17 @@ pub struct FigmaClient {
     rate_limiter: Arc<Mutex<RateLimiter>>,
 }
 
+impl Clone for FigmaClient {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            token: self.token.clone(),
+            cache: self.cache.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+        }
+    }
+}
+
 impl FigmaClient {
     /// Create a new Figma client with the given access token
     ///
@@ -34,9 +45,10 @@ impl FigmaClient {
         // Figma uses X-Figma-Token header, not Bearer auth
         headers.insert("X-Figma-Token", HeaderValue::from_str(&token)?);
 
+        let user_agent = format!("fgm-cli/{}", env!("CARGO_PKG_VERSION"));
         let client = Client::builder()
             .default_headers(headers)
-            .user_agent("fgm-cli/0.1.0")
+            .user_agent(user_agent)
             .build()?;
 
         Ok(Self {
@@ -98,7 +110,8 @@ impl FigmaClient {
         loop {
             // Check if we should proactively throttle
             {
-                let limiter = self.rate_limiter.lock().await;
+                let mut limiter = self.rate_limiter.lock().await;
+                limiter.record_request_attempt();
                 limiter.proactive_delay().await;
             }
 
@@ -115,6 +128,7 @@ impl FigmaClient {
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
                 let should_retry = {
                     let mut limiter = self.rate_limiter.lock().await;
+                    limiter.record_rate_limited_response();
                     limiter.wait_and_retry().await
                 };
 
@@ -152,5 +166,11 @@ impl FigmaClient {
 
         let result = response.json().await?;
         Ok(result)
+    }
+
+    /// Retrieve cumulative rate-limit telemetry for this client instance.
+    pub async fn rate_limit_telemetry(&self) -> RateLimitTelemetry {
+        let limiter = self.rate_limiter.lock().await;
+        limiter.telemetry_snapshot()
     }
 }

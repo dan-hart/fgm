@@ -24,11 +24,16 @@ impl FigmaUrl {
     /// - `abc123` (just the file key)
     /// - `abc123:123:456` (file key with node ID)
     pub fn parse(input: &str) -> Result<Self> {
-        let input = input.trim();
+        let input = input.trim().trim_matches('"').trim_matches('\'');
 
         // Check if it's a URL
         if input.starts_with("http://") || input.starts_with("https://") {
             return Self::parse_url(input);
+        }
+
+        // Support scheme-less Figma URLs pasted from chat/docs.
+        if Self::looks_like_scheme_less_figma_url(input) {
+            return Self::parse_url(&format!("https://{}", input));
         }
 
         // Check if it's a file key with node ID (format: fileKey:nodeId)
@@ -52,8 +57,10 @@ impl FigmaUrl {
         let url = Url::parse(input)?;
 
         // Validate domain
-        let host = url.host_str().ok_or_else(|| anyhow!("Invalid URL: no host"))?;
-        if !host.contains("figma.com") {
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow!("Invalid URL: no host"))?;
+        if host != "figma.com" && !host.ends_with(".figma.com") {
             return Err(anyhow!("Not a Figma URL: {}", host));
         }
 
@@ -82,14 +89,20 @@ impl FigmaUrl {
         });
 
         // Parse node-id from query params
-        let node_id = url.query_pairs().find_map(|(key, value)| {
+        let query_node_id = url.query_pairs().find_map(|(key, value)| {
             if key == "node-id" {
-                // Convert URL format (123-456) to API format (123:456)
-                Some(value.replace('-', ":"))
+                Some(Self::normalize_node_id(&value))
             } else {
                 None
             }
         });
+
+        // Some copied links put node-id in the URL fragment.
+        let fragment_node_id = url
+            .fragment()
+            .and_then(Self::extract_node_id_from_fragment)
+            .map(Self::normalize_node_id);
+        let node_id = query_node_id.or(fragment_node_id);
 
         Ok(Self {
             file_key,
@@ -111,10 +124,38 @@ impl FigmaUrl {
             if potential_file_key.chars().all(|c| c.is_alphanumeric())
                 && potential_node_id.contains(':')
             {
-                return Some((potential_file_key.to_string(), potential_node_id.to_string()));
+                return Some((
+                    potential_file_key.to_string(),
+                    potential_node_id.to_string(),
+                ));
             }
         }
         None
+    }
+
+    fn looks_like_scheme_less_figma_url(input: &str) -> bool {
+        let lowered = input.to_lowercase();
+        (lowered.starts_with("figma.com/") || lowered.starts_with("www.figma.com/"))
+            && lowered.contains('/')
+    }
+
+    fn extract_node_id_from_fragment(fragment: &str) -> Option<&str> {
+        for part in fragment.split('&') {
+            let mut pieces = part.splitn(2, '=');
+            let key = pieces.next()?;
+            let value = pieces.next().unwrap_or_default();
+            if key == "node-id" && !value.is_empty() {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    fn normalize_node_id(raw: &str) -> String {
+        let decoded = urlencoding::decode(raw)
+            .map(|v| v.into_owned())
+            .unwrap_or_else(|_| raw.to_string());
+        decoded.replace('-', ":")
     }
 
     /// Check if a string looks like a Figma URL
@@ -137,7 +178,8 @@ mod tests {
 
     #[test]
     fn test_parse_url_with_node_id() {
-        let url = FigmaUrl::parse("https://www.figma.com/design/abc123/Test?node-id=1-234").unwrap();
+        let url =
+            FigmaUrl::parse("https://www.figma.com/design/abc123/Test?node-id=1-234").unwrap();
         assert_eq!(url.file_key, "abc123");
         assert_eq!(url.node_id, Some("1:234".to_string()));
     }
@@ -161,5 +203,33 @@ mod tests {
         let url = FigmaUrl::parse("https://www.figma.com/proto/abc123/Proto?node-id=5-6").unwrap();
         assert_eq!(url.file_key, "abc123");
         assert_eq!(url.node_id, Some("5:6".to_string()));
+    }
+
+    #[test]
+    fn test_parse_scheme_less_url() {
+        let url = FigmaUrl::parse("www.figma.com/design/abc123/Test?node-id=1-2").unwrap();
+        assert_eq!(url.file_key, "abc123");
+        assert_eq!(url.node_id, Some("1:2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_fragment_node_id() {
+        let url = FigmaUrl::parse("https://www.figma.com/design/abc123/Test#node-id=2-44").unwrap();
+        assert_eq!(url.file_key, "abc123");
+        assert_eq!(url.node_id, Some("2:44".to_string()));
+    }
+
+    #[test]
+    fn test_parse_encoded_node_id() {
+        let url =
+            FigmaUrl::parse("https://www.figma.com/design/abc123/Test?node-id=7%3A11").unwrap();
+        assert_eq!(url.file_key, "abc123");
+        assert_eq!(url.node_id, Some("7:11".to_string()));
+    }
+
+    #[test]
+    fn test_reject_lookalike_domain() {
+        let err = FigmaUrl::parse("https://notfigma.com/design/abc123/Test").unwrap_err();
+        assert!(err.to_string().contains("Not a Figma URL"));
     }
 }

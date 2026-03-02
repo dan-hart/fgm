@@ -101,15 +101,15 @@ pub fn get_token_from_keychain() -> Result<String> {
     let entry = Entry::new(SERVICE_NAME, USERNAME)
         .context("Failed to create keychain entry - keychain may not be available")?;
 
-    entry
-        .get_password()
-        .map_err(|e| match e {
-            keyring::Error::NoEntry => anyhow!("No token stored in keychain"),
-            keyring::Error::Ambiguous(_) => anyhow!("Multiple keychain entries found - please run 'fgm auth logout' and re-login"),
-            keyring::Error::PlatformFailure(ref msg) => anyhow!("Keychain platform error: {}", msg),
-            keyring::Error::NoStorageAccess(ref msg) => anyhow!("Keychain access denied: {}", msg),
-            _ => anyhow!("Keychain error: {}", e),
-        })
+    entry.get_password().map_err(|e| match e {
+        keyring::Error::NoEntry => anyhow!("No token stored in keychain"),
+        keyring::Error::Ambiguous(_) => {
+            anyhow!("Multiple keychain entries found - please run 'fgm auth logout' and re-login")
+        }
+        keyring::Error::PlatformFailure(ref msg) => anyhow!("Keychain platform error: {}", msg),
+        keyring::Error::NoStorageAccess(ref msg) => anyhow!("Keychain access denied: {}", msg),
+        _ => anyhow!("Keychain error: {}", e),
+    })
 }
 
 /// Get token from config file
@@ -131,8 +131,7 @@ pub fn store_token_in_keychain(token: &str) -> Result<()> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, USERNAME)
-        .context("Failed to create keychain entry")?;
+    let entry = Entry::new(SERVICE_NAME, USERNAME).context("Failed to create keychain entry")?;
 
     entry
         .set_password(token)
@@ -188,15 +187,12 @@ pub fn remove_token_from_keychain() -> Result<()> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, USERNAME)
-        .context("Failed to create keychain entry")?;
+    let entry = Entry::new(SERVICE_NAME, USERNAME).context("Failed to create keychain entry")?;
 
-    entry
-        .delete_credential()
-        .map_err(|e| match e {
-            keyring::Error::NoEntry => anyhow!("No token in keychain"),
-            _ => anyhow!("Failed to remove from keychain: {}", e),
-        })
+    entry.delete_credential().map_err(|e| match e {
+        keyring::Error::NoEntry => anyhow!("No token in keychain"),
+        _ => anyhow!("Failed to remove from keychain: {}", e),
+    })
 }
 
 /// Remove token from config file
@@ -221,8 +217,8 @@ pub fn test_keychain_access() -> Result<()> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, "test_access")
-        .context("Failed to create test keychain entry")?;
+    let entry =
+        Entry::new(SERVICE_NAME, "test_access").context("Failed to create test keychain entry")?;
 
     // Try to set and immediately delete a test value
     entry

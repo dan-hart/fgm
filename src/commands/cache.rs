@@ -38,7 +38,11 @@ async fn warmup(file_key_or_url: &str, include_images: bool) -> Result<()> {
     let parsed = FigmaUrl::parse(file_key_or_url)?;
     let file_key = &parsed.file_key;
 
-    output::print_status(&format!("Warming cache for file: {}", file_key).bold().to_string());
+    output::print_status(
+        &format!("Warming cache for file: {}", file_key)
+            .bold()
+            .to_string(),
+    );
 
     let pb = if output::is_quiet() || output::format() == crate::output::OutputFormat::Json {
         ProgressBar::hidden()

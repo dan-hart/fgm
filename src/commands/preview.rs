@@ -6,7 +6,7 @@ use crate::output;
 use anyhow::Result;
 use colored::Colorize;
 use image::GenericImageView;
-use viuer::{Config as ViuConfig, print_from_file};
+use viuer::{print_from_file, Config as ViuConfig};
 
 pub async fn run(args: PreviewArgs) -> Result<()> {
     let token = get_token()?;

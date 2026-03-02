@@ -3,6 +3,7 @@
 //! Provides exponential backoff with jitter for handling HTTP 429 responses.
 
 use reqwest::{Response, StatusCode};
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -20,6 +21,14 @@ pub struct RateLimiter {
     remaining: Option<u32>,
     /// Retry-After value (seconds) from last 429 response
     retry_after: Option<u64>,
+    /// Total HTTP requests attempted through this limiter
+    total_requests: u64,
+    /// Total retries performed after 429 responses
+    total_retries: u64,
+    /// Total 429 responses observed
+    total_rate_limited_responses: u64,
+    /// Total proactive throttles performed
+    total_proactive_throttles: u64,
 }
 
 /// Information parsed from rate limit headers
@@ -33,6 +42,17 @@ pub struct RateLimitInfo {
     pub is_rate_limited: bool,
 }
 
+/// Cumulative telemetry for rate-limit behavior.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RateLimitTelemetry {
+    pub total_requests: u64,
+    pub total_retries: u64,
+    pub total_rate_limited_responses: u64,
+    pub total_proactive_throttles: u64,
+    pub remaining: Option<u32>,
+    pub retry_after: Option<u64>,
+}
+
 impl Default for RateLimiter {
     fn default() -> Self {
         Self {
@@ -42,6 +62,10 @@ impl Default for RateLimiter {
             max_delay_ms: 120_000, // 2 minutes max
             remaining: None,
             retry_after: None,
+            total_requests: 0,
+            total_retries: 0,
+            total_rate_limited_responses: 0,
+            total_proactive_throttles: 0,
         }
     }
 }
@@ -61,7 +85,21 @@ impl RateLimiter {
             max_delay_ms,
             remaining: None,
             retry_after: None,
+            total_requests: 0,
+            total_retries: 0,
+            total_rate_limited_responses: 0,
+            total_proactive_throttles: 0,
         }
+    }
+
+    /// Record a request attempt before dispatching HTTP.
+    pub fn record_request_attempt(&mut self) {
+        self.total_requests = self.total_requests.saturating_add(1);
+    }
+
+    /// Record a 429 rate-limited response.
+    pub fn record_rate_limited_response(&mut self) {
+        self.total_rate_limited_responses = self.total_rate_limited_responses.saturating_add(1);
     }
 
     /// Parse rate limit headers from response
@@ -109,7 +147,9 @@ impl RateLimiter {
         }
 
         // Exponential backoff: base_delay * 2^retry_count
-        let exp_delay = self.base_delay_ms.saturating_mul(2u64.pow(self.retry_count));
+        let exp_delay = self
+            .base_delay_ms
+            .saturating_mul(2u64.pow(self.retry_count));
         let capped_delay = exp_delay.min(self.max_delay_ms);
 
         // Add jitter (0-25% of delay) to prevent thundering herd
@@ -134,6 +174,7 @@ impl RateLimiter {
 
         sleep(delay).await;
         self.retry_count += 1;
+        self.total_retries = self.total_retries.saturating_add(1);
         true
     }
 
@@ -144,10 +185,23 @@ impl RateLimiter {
     }
 
     /// Proactive delay when approaching limits
-    pub async fn proactive_delay(&self) {
+    pub async fn proactive_delay(&mut self) {
         if self.should_throttle() {
             let delay = Duration::from_millis(500);
+            self.total_proactive_throttles = self.total_proactive_throttles.saturating_add(1);
             sleep(delay).await;
+        }
+    }
+
+    /// Snapshot cumulative telemetry for external reporting.
+    pub fn telemetry_snapshot(&self) -> RateLimitTelemetry {
+        RateLimitTelemetry {
+            total_requests: self.total_requests,
+            total_retries: self.total_retries,
+            total_rate_limited_responses: self.total_rate_limited_responses,
+            total_proactive_throttles: self.total_proactive_throttles,
+            remaining: self.remaining,
+            retry_after: self.retry_after,
         }
     }
 
@@ -223,5 +277,21 @@ mod tests {
 
         limiter.remaining = None;
         assert!(!limiter.should_throttle());
+    }
+
+    #[test]
+    fn test_telemetry_snapshot_counts_requests_and_retries() {
+        let mut limiter = RateLimiter::new();
+        limiter.record_request_attempt();
+        limiter.record_request_attempt();
+        limiter.record_rate_limited_response();
+        limiter.total_retries = 3;
+        limiter.total_proactive_throttles = 2;
+
+        let snapshot = limiter.telemetry_snapshot();
+        assert_eq!(snapshot.total_requests, 2);
+        assert_eq!(snapshot.total_retries, 3);
+        assert_eq!(snapshot.total_rate_limited_responses, 1);
+        assert_eq!(snapshot.total_proactive_throttles, 2);
     }
 }

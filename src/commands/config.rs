@@ -80,14 +80,18 @@ fn set_value(config: &mut Config, key: &str, value: Option<&str>, unset: bool) -
             config.defaults.output_format = v;
         }
         "defaults.image_protocol" => {
-            let v = value.ok_or_else(|| anyhow!("Value is required"))?.to_lowercase();
+            let v = value
+                .ok_or_else(|| anyhow!("Value is required"))?
+                .to_lowercase();
             if !matches!(v.as_str(), "auto" | "sixel" | "iterm" | "kitty") {
                 return Err(anyhow!("Invalid image protocol: {}", v));
             }
             config.defaults.image_protocol = v;
         }
         "export.default_format" => {
-            let v = value.ok_or_else(|| anyhow!("Value is required"))?.to_lowercase();
+            let v = value
+                .ok_or_else(|| anyhow!("Value is required"))?
+                .to_lowercase();
             if !matches!(v.as_str(), "png" | "svg" | "pdf" | "jpg") {
                 return Err(anyhow!("Invalid export format: {}", v));
             }
@@ -124,8 +128,5 @@ fn set_value(config: &mut Config, key: &str, value: Option<&str>, unset: bool) -
 }
 
 fn normalize_key(key: &str) -> String {
-    key.trim()
-        .to_lowercase()
-        .replace('-', "_")
-        .replace(' ', "")
+    key.trim().to_lowercase().replace('-', "_").replace(' ', "")
 }

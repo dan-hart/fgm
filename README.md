@@ -8,7 +8,10 @@ A fast, cross-platform command-line interface for Figma. Export assets, compare 
 
 ## Features
 
+- **Quick Mode** - Run `fgm "<figma-url>"` to export all top-level screens immediately
 - **Export** - Download PNG, SVG, PDF, JPG from any Figma file or node
+- **LLM Pack** - Emit `manifest.json` with image paths, node metadata, dimensions, hashes, and telemetry
+- **Pixel Perfect Profile** - `--profile pixel-perfect` for stable PNG exports tuned for visual validation
 - **Platform Export** - Generate iOS (@1x, @2x, @3x), Android (mdpi-xxxhdpi), or Web (1x, 2x) asset sets
 - **Compare** - Pixel-diff designs against dev screenshots with threshold-based CI pass/fail
 - **Compare URL** - Export from Figma and compare against a screenshot in one command
@@ -51,10 +54,10 @@ fgm auth login
 # Or store it securely in your keychain (opt-in)
 fgm auth login --keychain
 
-# 2. Get file info from a Figma URL
-fgm files get "https://www.figma.com/design/abc123/MyFile"
+# 2. Quick export all screens from a URL
+fgm "https://www.figma.com/design/abc123/MyFile"
 
-# 3. Export a frame
+# 3. Export a specific frame
 fgm export file "https://www.figma.com/design/abc123/MyFile?node-id=1-2" -o ./exports/
 ```
 
@@ -91,6 +94,9 @@ fgm auth logout
 ### Export Assets
 
 ```bash
+# Quick mode: export all top-level screens from URL
+fgm "https://www.figma.com/design/abc123/File"
+
 # Export a specific node from URL
 fgm export file "https://www.figma.com/design/abc123/File?node-id=1-2" -o ./out/
 
@@ -114,6 +120,12 @@ fgm export file abc123 --node "1:2" --platform android -o ./android-res/
 
 # Export for Web (generates 1x and @2x)
 fgm export file abc123 --node "1:2" --platform web -o ./web-assets/
+
+# LLM pack export (writes images + manifest.json)
+fgm export file abc123 --all-frames --llm-pack -o ./llm-pack/
+
+# Pixel-perfect profile (PNG 2x + llm-pack + resume defaults)
+fgm export file abc123 --all-frames --profile pixel-perfect -o ./pixel-perfect/
 ```
 
 **Manifest file example (`manifest.toml`):**
@@ -365,6 +377,9 @@ fgm files get "https://www.figma.com/design/abc123/Name?node-id=1-2"
 fgm export file "https://www.figma.com/design/abc123/Name?node-id=1-2"
 # Equivalent to:
 fgm export file abc123 --node "1:2"
+
+# Scheme-less links also work
+fgm "www.figma.com/design/abc123/Name?node-id=1-2"
 ```
 
 ## Configuration
@@ -395,11 +410,13 @@ fgm config set defaults.output_format table
 ## Rate Limits
 
 The Figma API has rate limits. fgm handles this automatically:
-- Batches exports in chunks of 20 nodes
-- Adds delays between batches
+- Uses adaptive batch sizing for export URL requests
+- Applies proactive throttling when limits are close
 - Retries with backoff on rate limit errors
+- Uses bounded concurrent downloads to speed up exports safely
+- Reuses cached metadata and export URLs when possible
 
-For large exports, consider using `--all-frames` with a smaller file or exporting in batches.
+For LLM pipelines, use `--llm-pack` to get machine-readable telemetry (`api_calls`, `export_batches`, `cache_hits`, `cache_misses`, rate-limit stats) in `manifest.json`.
 
 ## Security
 

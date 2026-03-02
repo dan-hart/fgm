@@ -48,10 +48,7 @@ static SETTINGS: OnceLock<OutputSettings> = OnceLock::new();
 
 /// Initialize global output settings
 pub fn init(format: OutputFormat, verbosity: Verbosity, color: bool) {
-    let _ = SETTINGS.set(OutputSettings {
-        format,
-        verbosity,
-    });
+    let _ = SETTINGS.set(OutputSettings { format, verbosity });
     if !color {
         colored::control::set_override(false);
     }

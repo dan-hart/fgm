@@ -58,7 +58,11 @@ struct DesignTokens {
 
 async fn colors(client: &FigmaClient, file_key: &str) -> Result<()> {
     let file = client.get_file(file_key).await?;
-    output::print_status(&format!("Color Styles from: {}", file.name).bold().to_string());
+    output::print_status(
+        &format!("Color Styles from: {}", file.name)
+            .bold()
+            .to_string(),
+    );
 
     let mut color_styles: Vec<(&String, &str)> = file
         .styles
@@ -118,18 +122,30 @@ trait HasFillsAndChildren {
 }
 
 impl HasFillsAndChildren for crate::api::types::Document {
-    fn fills(&self) -> Option<&Vec<crate::api::types::Paint>> { None }
-    fn children(&self) -> Option<&Vec<Node>> { self.children.as_ref() }
+    fn fills(&self) -> Option<&Vec<crate::api::types::Paint>> {
+        None
+    }
+    fn children(&self) -> Option<&Vec<Node>> {
+        self.children.as_ref()
+    }
 }
 
 impl HasFillsAndChildren for Node {
-    fn fills(&self) -> Option<&Vec<crate::api::types::Paint>> { self.fills.as_ref() }
-    fn children(&self) -> Option<&Vec<Node>> { self.children.as_ref() }
+    fn fills(&self) -> Option<&Vec<crate::api::types::Paint>> {
+        self.fills.as_ref()
+    }
+    fn children(&self) -> Option<&Vec<Node>> {
+        self.children.as_ref()
+    }
 }
 
 async fn typography(client: &FigmaClient, file_key: &str) -> Result<()> {
     let file = client.get_file(file_key).await?;
-    output::print_status(&format!("Typography Styles from: {}", file.name).bold().to_string());
+    output::print_status(
+        &format!("Typography Styles from: {}", file.name)
+            .bold()
+            .to_string(),
+    );
 
     let mut text_styles: Vec<(&String, &str, Option<&str>)> = file
         .styles
@@ -186,20 +202,36 @@ trait HasStyleAndChildren {
 }
 
 impl HasStyleAndChildren for crate::api::types::Document {
-    fn type_style(&self) -> Option<&crate::api::types::TypeStyle> { None }
-    fn node_children(&self) -> Option<&Vec<Node>> { self.children.as_ref() }
-    fn node_name(&self) -> Option<String> { Some(self.name.clone()) }
+    fn type_style(&self) -> Option<&crate::api::types::TypeStyle> {
+        None
+    }
+    fn node_children(&self) -> Option<&Vec<Node>> {
+        self.children.as_ref()
+    }
+    fn node_name(&self) -> Option<String> {
+        Some(self.name.clone())
+    }
 }
 
 impl HasStyleAndChildren for Node {
-    fn type_style(&self) -> Option<&crate::api::types::TypeStyle> { self.style.as_ref() }
-    fn node_children(&self) -> Option<&Vec<Node>> { self.children.as_ref() }
-    fn node_name(&self) -> Option<String> { Some(self.name.clone()) }
+    fn type_style(&self) -> Option<&crate::api::types::TypeStyle> {
+        self.style.as_ref()
+    }
+    fn node_children(&self) -> Option<&Vec<Node>> {
+        self.children.as_ref()
+    }
+    fn node_name(&self) -> Option<String> {
+        Some(self.name.clone())
+    }
 }
 
 async fn spacing(client: &FigmaClient, file_key: &str) -> Result<()> {
     let file = client.get_file(file_key).await?;
-    output::print_status(&format!("Spacing Analysis from: {}", file.name).bold().to_string());
+    output::print_status(
+        &format!("Spacing Analysis from: {}", file.name)
+            .bold()
+            .to_string(),
+    );
     output::print_status(
         &"Note: Spacing extraction requires parsing auto-layout properties"
             .yellow()
@@ -221,7 +253,11 @@ async fn export(
     config: &Config,
 ) -> Result<()> {
     let file = client.get_file(file_key).await?;
-    output::print_status(&format!("Extracting tokens from: {}", file.name).bold().to_string());
+    output::print_status(
+        &format!("Extracting tokens from: {}", file.name)
+            .bold()
+            .to_string(),
+    );
 
     let mut color_map: HashMap<String, Color> = HashMap::new();
     extract_all_colors(&file.document, &mut color_map);
@@ -466,7 +502,12 @@ fn to_pascal_case(name: &str) -> String {
     if out.is_empty() {
         "Token".to_string()
     } else {
-        if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        if out
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
             out.insert(0, '_');
         }
         out
@@ -514,7 +555,10 @@ struct TypographyKey {
     letter_spacing: Option<u64>,
 }
 
-fn extract_typography_tokens(document: &crate::api::types::Document, tokens: &mut Vec<TypographyToken>) {
+fn extract_typography_tokens(
+    document: &crate::api::types::Document,
+    tokens: &mut Vec<TypographyToken>,
+) {
     let mut seen: HashSet<TypographyKey> = HashSet::new();
     let mut used_names: HashSet<String> = HashSet::new();
     collect_typography(document, tokens, &mut seen, &mut used_names);

@@ -56,10 +56,7 @@ async fn main() -> Result<()> {
     auth::set_keychain_enabled(!cli.no_keychain);
 
     if let Some(err) = config_error {
-        output::print_warning(&format!(
-            "Failed to load config ({}), using defaults",
-            err
-        ));
+        output::print_warning(&format!("Failed to load config ({}), using defaults", err));
     }
     if let Some(warn) = format_warning {
         output::print_warning(&warn);
@@ -79,6 +76,7 @@ async fn main() -> Result<()> {
         Commands::Map { command } => commands::map::run(command).await,
         Commands::Cache { command } => commands::cache::run(command).await,
         Commands::Config { command } => commands::config::run(command).await,
+        Commands::Quick(args) => commands::export::run_quick(args).await,
     };
 
     if let Err(err) = result {

@@ -18,7 +18,11 @@ pub async fn run(command: ComponentsCommands) -> Result<()> {
 }
 
 async fn list(client: &FigmaClient, team_id: &str) -> Result<()> {
-    output::print_status(&format!("Published components in team {}:", team_id).bold().to_string());
+    output::print_status(
+        &format!("Published components in team {}:", team_id)
+            .bold()
+            .to_string(),
+    );
 
     let response = client.get_team_components(team_id).await?;
 
@@ -57,12 +61,11 @@ async fn list(client: &FigmaClient, team_id: &str) -> Result<()> {
             output::print_json(&out)?;
         } else {
             output::print_table(&rows);
-            output::print_status(&format!(
-                "Total: {} components",
-                meta.components.len()
-            )
-            .bold()
-            .to_string());
+            output::print_status(
+                &format!("Total: {} components", meta.components.len())
+                    .bold()
+                    .to_string(),
+            );
         }
     } else {
         output::print_warning("No component data returned");
