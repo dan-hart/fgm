@@ -23,6 +23,7 @@ const INITIAL_BATCH_SIZE: usize = 20;
 const MIN_BATCH_SIZE: usize = 5;
 const MAX_BATCH_SIZE: usize = 40;
 const DOWNLOAD_CONCURRENCY: usize = 6;
+const DOWNLOAD_STATUS_INTERVAL: usize = 5;
 
 #[derive(Clone)]
 struct ResolvedFileOptions {
@@ -365,6 +366,10 @@ async fn export_file(
     let start = Instant::now();
     let mut telemetry = ExportTelemetry::default();
 
+    if all_frames {
+        output::print_status("Discovering top-level frames...");
+    }
+
     let mut ids_to_export: Vec<String> = if all_frames {
         telemetry.api_calls += 1;
         list_top_level_frame_ids(client, file_key).await?
@@ -383,14 +388,16 @@ async fn export_file(
 
     output::print_status(
         &format!(
-            "Exporting {} node(s) as {} at {}x...",
+            "Exporting {} node(s) as {} at {}x to {}...",
             ids_to_export.len(),
             options.format,
-            options.scale
+            options.scale,
+            options.output.display()
         )
         .bold()
         .to_string(),
     );
+    output::print_status("Resolving image URLs with adaptive batching...");
 
     let mut all_images: HashMap<String, Option<String>> = HashMap::new();
     let mut batch_size = INITIAL_BATCH_SIZE.min(ids_to_export.len().max(1));
@@ -464,6 +471,11 @@ async fn export_file(
 
         batch_size = next_batch_size(batch_size, saw_rate_limit, used_full_batch);
         cursor = chunk_end;
+        output::print_status(&format_resolution_progress(
+            cursor,
+            ids_to_export.len(),
+            batch_size,
+        ));
 
         if cursor < ids_to_export.len() {
             tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
@@ -498,6 +510,11 @@ async fn export_file(
             &options.format,
         );
     }
+    let total_assets = planned_assets.len();
+    output::print_status(&format!(
+        "Downloading {} image(s) with up to {} concurrent requests...",
+        total_assets, DOWNLOAD_CONCURRENCY
+    ));
 
     let semaphore = Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY));
     let mut joins = JoinSet::new();
@@ -522,9 +539,14 @@ async fn export_file(
     }
 
     let mut downloaded = Vec::new();
+    let mut downloaded_count = 0usize;
     while let Some(join_result) = joins.join_next().await {
         let asset = join_result.map_err(|err| anyhow!("download task failed: {}", err))??;
         downloaded.push(asset);
+        downloaded_count = downloaded_count.saturating_add(1);
+        if should_emit_download_status(downloaded_count, total_assets) {
+            output::print_status(&format_download_progress(downloaded_count, total_assets));
+        }
     }
 
     downloaded.sort_by_key(|asset| asset.order);
@@ -545,6 +567,7 @@ async fn export_file(
         );
         bar
     };
+    output::print_status("Writing files to disk...");
 
     let resume_index_path = options.output.join(".fgm-export-index.json");
     let mut resume_index = if options.resume {
@@ -611,6 +634,14 @@ async fn export_file(
     if options.resume {
         save_resume_index(&resume_index_path, &resume_index)?;
     }
+
+    let written_count = asset_records
+        .len()
+        .saturating_sub(telemetry.skipped_writes as usize);
+    output::print_status(&format!(
+        "Saved {} file(s), skipped {} unchanged file(s)",
+        written_count, telemetry.skipped_writes
+    ));
 
     let mut node_context = HashMap::new();
     if options.llm_pack {
@@ -729,6 +760,21 @@ fn next_batch_size(current: usize, saw_rate_limit: bool, filled_batch: bool) -> 
         return (current + 5).min(MAX_BATCH_SIZE);
     }
     current
+}
+
+fn format_resolution_progress(resolved: usize, total: usize, next_batch: usize) -> String {
+    format!(
+        "Resolved export URLs: {}/{} nodes (next batch {})",
+        resolved, total, next_batch
+    )
+}
+
+fn format_download_progress(downloaded: usize, total: usize) -> String {
+    format!("Downloaded images: {}/{}", downloaded, total)
+}
+
+fn should_emit_download_status(downloaded: usize, total: usize) -> bool {
+    downloaded == total || downloaded % DOWNLOAD_STATUS_INTERVAL == 0
 }
 
 fn is_rate_limit_message(msg: &str) -> bool {
@@ -1175,5 +1221,21 @@ mod tests {
         assert!(looks_like_quick_input(
             "https://www.figma.com/design/abc123/Name?node-id=1-2"
         ));
+    }
+
+    #[test]
+    fn resolution_progress_message_is_readable() {
+        assert_eq!(
+            format_resolution_progress(20, 75, 25),
+            "Resolved export URLs: 20/75 nodes (next batch 25)"
+        );
+    }
+
+    #[test]
+    fn download_progress_message_is_readable() {
+        assert_eq!(
+            format_download_progress(12, 40),
+            "Downloaded images: 12/40"
+        );
     }
 }

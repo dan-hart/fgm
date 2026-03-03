@@ -8,10 +8,11 @@ A fast, cross-platform command-line interface for Figma. Export assets, compare 
 
 ## Features
 
-- **Quick Mode** - Run `fgm "<figma-url>"` to export all top-level screens immediately
+- **Quick Mode** - Run `fgm "<figma-url>"` to export all top-level screens immediately (default PNG output to `./fgm-exports`)
 - **Export** - Download PNG, SVG, PDF, JPG from any Figma file or node
 - **LLM Pack** - Emit `manifest.json` with image paths, node metadata, dimensions, hashes, and telemetry
 - **Pixel Perfect Profile** - `--profile pixel-perfect` for stable PNG exports tuned for visual validation
+- **Live Export Status** - See URL-resolution, download, and write progress during long exports
 - **Platform Export** - Generate iOS (@1x, @2x, @3x), Android (mdpi-xxxhdpi), or Web (1x, 2x) asset sets
 - **Compare** - Pixel-diff designs against dev screenshots with threshold-based CI pass/fail
 - **Compare URL** - Export from Figma and compare against a screenshot in one command
@@ -57,7 +58,10 @@ fgm auth login --keychain
 # 2. Quick export all screens from a URL
 fgm "https://www.figma.com/design/abc123/MyFile"
 
-# 3. Export a specific frame
+# 3. LLM-first export (images + manifest.json)
+fgm "https://www.figma.com/design/abc123/MyFile" --llm-pack -o ./llm-pack/
+
+# 4. Export a specific frame
 fgm export file "https://www.figma.com/design/abc123/MyFile?node-id=1-2" -o ./exports/
 ```
 
@@ -97,6 +101,9 @@ fgm auth logout
 # Quick mode: export all top-level screens from URL
 fgm "https://www.figma.com/design/abc123/File"
 
+# Quick mode with custom output path
+fgm "https://www.figma.com/design/abc123/File" -o ./designs/
+
 # Export a specific node from URL
 fgm export file "https://www.figma.com/design/abc123/File?node-id=1-2" -o ./out/
 
@@ -126,6 +133,25 @@ fgm export file abc123 --all-frames --llm-pack -o ./llm-pack/
 
 # Pixel-perfect profile (PNG 2x + llm-pack + resume defaults)
 fgm export file abc123 --all-frames --profile pixel-perfect -o ./pixel-perfect/
+```
+
+**Typical export status output:**
+
+```text
+Discovering top-level frames...
+Exporting 58 node(s) as png at 2x to ./fgm-exports...
+Resolving image URLs with adaptive batching...
+Resolved export URLs: 20/58 nodes (next batch 25)
+Resolved export URLs: 45/58 nodes (next batch 30)
+Resolved export URLs: 58/58 nodes (next batch 30)
+Downloading 58 image(s) with up to 6 concurrent requests...
+Downloaded images: 5/58
+Downloaded images: 10/58
+...
+Downloaded images: 58/58
+Writing files to disk...
+Saved 58 file(s), skipped 0 unchanged file(s)
+success: Exported to ./fgm-exports
 ```
 
 **Manifest file example (`manifest.toml`):**

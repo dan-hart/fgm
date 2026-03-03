@@ -18,15 +18,22 @@ https://www.figma.com/developers/api#access-tokens
 Set via FIGMA_TOKEN environment variable or run 'fgm auth login' to store
 in your config file by default. Use --keychain to store in the system keychain.
 Use --no-keychain to avoid OS prompts.")]
-#[command(after_help = "GETTING STARTED:
-    fgm <URL>                                   Quick export all top-level frames
+#[command(after_help = "QUICK EXPORT (DEFAULT):
+    fgm \"https://www.figma.com/design/abc123/MyFile\"
+        Default quick export: all top-level frames as PNG to ./fgm-exports
+    fgm \"https://www.figma.com/design/abc123/MyFile\" -o ./designs/
+        Save all screens to a custom output directory
+    fgm \"https://www.figma.com/design/abc123/MyFile\" --profile pixel-perfect
+        PNG 2x + --llm-pack + resume defaults for LLM visual review
+
+GETTING STARTED:
     fgm auth login                              Store your Figma token
-    fgm files get <URL>                         Get file info from URL
-    fgm export file <URL> -o ./out/             Export assets to directory
+    fgm files get \"https://www.figma.com/design/abc123/MyFile\"
+    fgm export file \"https://www.figma.com/design/abc123/MyFile?node-id=1-2\" -o ./out/
 
 COMMON WORKFLOWS:
-    fgm export file <URL> --platform ios        Export for iOS (@1x, @2x, @3x)
-    fgm compare-url <URL> screenshot.png        Compare Figma to screenshot
+    fgm export file \"https://www.figma.com/design/abc123/MyFile\" --platform ios
+    fgm compare-url \"https://www.figma.com/design/abc123/MyFile?node-id=1-2\" screenshot.png
     fgm tokens export <key> --format css        Export design tokens to CSS
 
 AUTH QUICKSTART:
@@ -374,8 +381,17 @@ top-level frames in the file. Supports PNG, SVG, PDF, and JPG formats.
 Use --platform to generate all required sizes for iOS, Android, or Web.
 Use --llm-pack to emit a manifest.json for LLM workflows.")]
     #[command(after_help = "EXAMPLES:
+    # LLM-first export from a URL (all top-level screens + manifest)
+    fgm export file \"https://www.figma.com/design/abc123/MyFile\" --all-frames --llm-pack -o ./llm-pack/
+
+    # Quick mode equivalent (defaults to --all-frames)
+    fgm \"https://www.figma.com/design/abc123/MyFile\" --llm-pack -o ./llm-pack/
+
+    # Pixel-perfect profile for screenshot comparison workflows
+    fgm export file \"https://www.figma.com/design/abc123/MyFile\" --all-frames --profile pixel-perfect -o ./pixel-perfect/
+
     # Export a single node from URL
-    fgm export file \"https://figma.com/design/abc?node-id=1-2\" -o ./out/
+    fgm export file \"https://www.figma.com/design/abc123/MyFile?node-id=1-2\" -o ./out/
 
     # Export multiple nodes
     fgm export file abc123 --node \"1:2\" --node \"1:3\" -o ./out/
@@ -993,6 +1009,35 @@ mod tests {
         assert!(help.contains("--format"));
         assert!(help.contains("--json"));
         assert!(help.contains("--no-color"));
+    }
+
+    #[test]
+    fn help_includes_quick_mode_url_examples_and_defaults() {
+        let mut cmd = Cli::command();
+        let help = cmd.render_long_help().to_string();
+
+        assert!(help.contains("fgm \"https://www.figma.com/design/abc123/MyFile\""));
+        assert!(
+            help.contains("Default quick export: all top-level frames as PNG to ./fgm-exports")
+        );
+    }
+
+    #[test]
+    fn export_file_help_includes_llm_first_examples() {
+        let mut cmd = Cli::command();
+        let export = cmd
+            .find_subcommand_mut("export")
+            .expect("export subcommand should exist");
+        let file = export
+            .find_subcommand_mut("file")
+            .expect("export file subcommand should exist");
+        let help = file.render_long_help().to_string();
+
+        assert!(help.contains("--llm-pack"));
+        assert!(help.contains("--profile pixel-perfect"));
+        assert!(help.contains(
+            "fgm export file \"https://www.figma.com/design/abc123/MyFile\" --all-frames --llm-pack"
+        ));
     }
 
     #[test]
