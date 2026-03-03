@@ -5,6 +5,7 @@
 
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,19 +59,21 @@ impl CacheKey {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        ids.hash(&mut hasher);
+        let canonical_ids = canonical_node_ids(ids);
+        for id in canonical_ids {
+            id.hash(&mut hasher);
+        }
         format!("{:x}", hasher.finish())
     }
 
     /// Create hash of export parameters
     pub fn hash_export_params(ids: &[String], format: &str, scale: f32) -> String {
         use std::collections::hash_map::DefaultHasher;
-        use std::collections::BTreeSet;
         use std::hash::{Hash, Hasher};
 
         // Canonicalize IDs so equivalent requests with different ordering
         // map to the same cache key.
-        let canonical_ids: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+        let canonical_ids = canonical_node_ids(ids);
         let mut hasher = DefaultHasher::new();
         for id in canonical_ids {
             id.hash(&mut hasher);
@@ -79,6 +82,29 @@ impl CacheKey {
         scale.to_bits().hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheEntryFreshness {
+    Fresh,
+    Stale,
+}
+
+fn canonical_node_ids(ids: &[String]) -> BTreeSet<String> {
+    ids.iter()
+        .map(|id| normalize_node_id_for_cache(id))
+        .collect::<BTreeSet<_>>()
+}
+
+fn normalize_node_id_for_cache(id: &str) -> String {
+    let mut normalized = id.trim().to_string();
+    if normalized.contains("%3A") || normalized.contains("%3a") {
+        normalized = normalized.replace("%3A", ":").replace("%3a", ":");
+    }
+    if normalized.contains('-') && !normalized.contains(':') {
+        normalized = normalized.replace('-', ":");
+    }
+    normalized
 }
 
 /// Cached entry with metadata
@@ -181,12 +207,30 @@ impl FigmaCache {
 
     /// Get value from cache (memory first, then disk)
     pub fn get<T: for<'de> Deserialize<'de>>(&self, key: &CacheKey) -> Option<T> {
+        self.get_with_freshness::<T>(key)
+            .and_then(|(value, freshness)| match freshness {
+                CacheEntryFreshness::Fresh => Some(value),
+                CacheEntryFreshness::Stale => None,
+            })
+    }
+
+    /// Get a value from cache and include freshness metadata.
+    ///
+    /// This is used for stale-while-revalidate workflows: callers can serve stale
+    /// data immediately and refresh in the background.
+    pub fn get_with_freshness<T: for<'de> Deserialize<'de>>(
+        &self,
+        key: &CacheKey,
+    ) -> Option<(T, CacheEntryFreshness)> {
         let key_str = key.as_string();
 
         // Check memory cache first
         if let Some(entry) = self.memory.get(&key_str) {
-            if entry.is_valid() {
-                return serde_json::from_str(&entry.data).ok();
+            if let Ok(value) = serde_json::from_str(&entry.data) {
+                if entry.is_valid() {
+                    return Some((value, CacheEntryFreshness::Fresh));
+                }
+                return Some((value, CacheEntryFreshness::Stale));
             } else {
                 // Expired in memory, remove it
                 self.memory.invalidate(&key_str);
@@ -196,13 +240,13 @@ impl FigmaCache {
         // Check disk cache if enabled
         if self.disk_enabled {
             if let Some(entry) = self.read_disk(&key_str) {
-                if entry.is_valid() {
+                if let Ok(value) = serde_json::from_str(&entry.data) {
                     // Promote to memory cache
                     self.memory.insert(key_str, entry.clone());
-                    return serde_json::from_str(&entry.data).ok();
-                } else {
-                    // Expired on disk, remove it
-                    self.delete_disk(&key_str);
+                    if entry.is_valid() {
+                        return Some((value, CacheEntryFreshness::Fresh));
+                    }
+                    return Some((value, CacheEntryFreshness::Stale));
                 }
             }
         }
@@ -415,13 +459,16 @@ mod tests {
         let ids1 = vec!["1:1".to_string(), "1:2".to_string()];
         let ids2 = vec!["1:1".to_string(), "1:2".to_string()];
         let ids3 = vec!["1:2".to_string(), "1:1".to_string()];
+        let ids4 = vec!["1-1".to_string(), "1%3A2".to_string()];
 
         let hash1 = CacheKey::hash_node_ids(&ids1);
         let hash2 = CacheKey::hash_node_ids(&ids2);
         let hash3 = CacheKey::hash_node_ids(&ids3);
+        let hash4 = CacheKey::hash_node_ids(&ids4);
 
         assert_eq!(hash1, hash2);
-        assert_ne!(hash1, hash3); // Different order = different hash
+        assert_eq!(hash1, hash3);
+        assert_eq!(hash1, hash4);
     }
 
     #[test]
@@ -436,5 +483,21 @@ mod tests {
 
         assert_eq!(h1, h2);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_get_with_freshness_returns_stale_entries() {
+        let cache = FigmaCache::memory_only();
+        let key = CacheKey::File("stale-test".to_string());
+        cache.set(&key, &"value".to_string(), Duration::from_secs(0));
+
+        let stale = cache
+            .get_with_freshness::<String>(&key)
+            .expect("stale entry should still deserialize");
+        assert_eq!(stale.0, "value".to_string());
+        assert_eq!(stale.1, CacheEntryFreshness::Stale);
+
+        let fresh: Option<String> = cache.get(&key);
+        assert!(fresh.is_none(), "regular get should hide stale entries");
     }
 }

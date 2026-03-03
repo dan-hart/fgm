@@ -25,6 +25,8 @@ Use --no-keychain to avoid OS prompts.")]
         Save all screens to a custom output directory
     fgm \"https://www.figma.com/design/abc123/MyFile\" --profile pixel-perfect
         PNG 2x + --llm-pack + resume defaults for LLM visual review
+    fgm \"https://www.figma.com/design/abc123/MyFile\" --profile low-rate --delta
+        Cache-first low-rate mode with unchanged-version skips
 
 GETTING STARTED:
     fgm auth login                              Store your Figma token
@@ -390,6 +392,9 @@ Use --llm-pack to emit a manifest.json for LLM workflows.")]
     # Pixel-perfect profile for screenshot comparison workflows
     fgm export file \"https://www.figma.com/design/abc123/MyFile\" --all-frames --profile pixel-perfect -o ./pixel-perfect/
 
+    # Low-rate profile for aggressive cache-first exports
+    fgm export file \"https://www.figma.com/design/abc123/MyFile\" --all-frames --profile low-rate --delta -o ./exports/
+
     # Export a single node from URL
     fgm export file \"https://www.figma.com/design/abc123/MyFile?node-id=1-2\" -o ./out/
 
@@ -456,6 +461,9 @@ Use --llm-pack to emit a manifest.json for LLM workflows.")]
         /// Skip rewriting image files when content is unchanged
         #[arg(long, help = "Resume mode: skip unchanged files")]
         resume: bool,
+        /// Skip export URL/image fetch when file version is unchanged
+        #[arg(long, help = "Delta mode: skip unchanged file versions")]
+        delta: bool,
         /// Apply a preset export profile
         #[arg(long, value_enum, help = "Export profile preset")]
         profile: Option<ExportProfile>,
@@ -525,6 +533,8 @@ impl ExportFormat {
 pub enum ExportProfile {
     /// Pixel-perfect defaults for design-to-LLM pipelines
     PixelPerfect,
+    /// Low-rate defaults optimized for cache-first operation
+    LowRate,
 }
 
 // Compare arguments
@@ -1091,6 +1101,34 @@ mod tests {
                 command: ExportCommands::File { profile, .. },
             } => {
                 assert!(matches!(profile, Some(ExportProfile::PixelPerfect)));
+            }
+            _ => panic!("expected export file"),
+        }
+    }
+
+    #[test]
+    fn parses_low_rate_profile_and_delta_flag() {
+        let cli = Cli::try_parse_from([
+            "fgm",
+            "export",
+            "file",
+            "abc123",
+            "--all-frames",
+            "--profile",
+            "low-rate",
+            "--delta",
+        ])
+        .expect("should parse low-rate profile");
+
+        match cli.command {
+            Commands::Export {
+                command:
+                    ExportCommands::File {
+                        profile, delta, ..
+                    },
+            } => {
+                assert!(matches!(profile, Some(ExportProfile::LowRate)));
+                assert!(delta);
             }
             _ => panic!("expected export file"),
         }

@@ -10,8 +10,10 @@ A fast, cross-platform command-line interface for Figma. Export assets, compare 
 
 - **Quick Mode** - Run `fgm "<figma-url>"` to export all top-level screens immediately (default PNG output to `./fgm-exports`)
 - **Export** - Download PNG, SVG, PDF, JPG from any Figma file or node
+- **Cache-First by Default** - Metadata, nodes, and export URL lookups are cached automatically (disk + memory)
 - **LLM Pack** - Emit `manifest.json` with image paths, node metadata, dimensions, hashes, and telemetry
 - **Pixel Perfect Profile** - `--profile pixel-perfect` for stable PNG exports tuned for visual validation
+- **Low-Rate Profile** - `--profile low-rate` enables conservative batching and delta-friendly defaults
 - **Live Export Status** - See URL-resolution, download, and write progress during long exports
 - **Platform Export** - Generate iOS (@1x, @2x, @3x), Android (mdpi-xxxhdpi), or Web (1x, 2x) asset sets
 - **Compare** - Pixel-diff designs against dev screenshots with threshold-based CI pass/fail
@@ -133,6 +135,12 @@ fgm export file abc123 --all-frames --llm-pack -o ./llm-pack/
 
 # Pixel-perfect profile (PNG 2x + llm-pack + resume defaults)
 fgm export file abc123 --all-frames --profile pixel-perfect -o ./pixel-perfect/
+
+# Low-rate profile (cache-first + conservative batching + delta/resume defaults)
+fgm export file abc123 --all-frames --profile low-rate -o ./low-rate/
+
+# Delta mode: skip export URL/image fetches when file version is unchanged
+fgm export file abc123 --all-frames --delta -o ./out/
 ```
 
 **Typical export status output:**
@@ -152,6 +160,16 @@ Downloaded images: 58/58
 Writing files to disk...
 Saved 58 file(s), skipped 0 unchanged file(s)
 success: Exported to ./fgm-exports
+```
+
+**Rate-limit friendly workflow (recommended for LLM loops):**
+
+```bash
+# 1) First run: cache + export
+fgm "https://www.figma.com/design/abc123/File" --profile low-rate --llm-pack -o ./llm-pack/
+
+# 2) Follow-up runs: only refresh when file version changes
+fgm "https://www.figma.com/design/abc123/File" --profile low-rate --delta -o ./llm-pack/
 ```
 
 **Manifest file example (`manifest.toml`):**

@@ -1,5 +1,5 @@
 use crate::api::rate_limit::RateLimitTelemetry;
-use crate::api::{CacheKey, FigmaClient, FigmaUrl};
+use crate::api::{CacheKey, CacheTTL, FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::{ExportCommands, ExportFormat, ExportProfile, Platform};
 use crate::config::Config;
@@ -22,7 +22,6 @@ use tokio::task::JoinSet;
 const INITIAL_BATCH_SIZE: usize = 20;
 const MIN_BATCH_SIZE: usize = 5;
 const MAX_BATCH_SIZE: usize = 40;
-const DOWNLOAD_CONCURRENCY: usize = 6;
 const DOWNLOAD_STATUS_INTERVAL: usize = 5;
 
 #[derive(Clone)]
@@ -33,7 +32,9 @@ struct ResolvedFileOptions {
     llm_pack: bool,
     manifest_name: String,
     resume: bool,
+    delta: bool,
     profile: Option<ExportProfile>,
+    low_rate: bool,
     source_input: String,
     quick_mode: bool,
 }
@@ -70,6 +71,9 @@ struct QuickExportArgs {
         help = "Resume mode: skip unchanged files"
     )]
     resume: bool,
+    /// Skip export URL/image fetches when file version is unchanged
+    #[arg(long, help = "Delta mode: skip unchanged file versions")]
+    delta: bool,
     /// Apply a preset export profile
     #[arg(long, value_enum, help = "Export profile preset")]
     profile: Option<ExportProfile>,
@@ -153,6 +157,8 @@ struct ExportJsonSummary {
     asset_count: usize,
     quick_mode: bool,
     llm_pack: bool,
+    delta: bool,
+    profile: Option<String>,
     telemetry: ExportTelemetry,
 }
 
@@ -160,6 +166,8 @@ struct ExportJsonSummary {
 struct ResumeIndex {
     #[serde(default = "default_resume_index_version")]
     version: u8,
+    #[serde(default)]
+    file_version: Option<String>,
     #[serde(default)]
     files: HashMap<String, ResumeIndexEntry>,
 }
@@ -193,6 +201,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             llm_pack,
             manifest_name,
             resume,
+            delta,
             profile,
         } => {
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
@@ -211,6 +220,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
                 llm_pack,
                 manifest_name,
                 resume,
+                delta,
                 profile,
                 file_key_or_url,
                 false,
@@ -276,6 +286,7 @@ pub async fn run_quick(args: Vec<String>) -> Result<()> {
         quick.llm_pack,
         quick.manifest_name,
         quick.resume,
+        quick.delta,
         quick.profile,
         quick.input,
         true,
@@ -292,6 +303,7 @@ fn resolve_file_options(
     llm_pack: bool,
     manifest_name: String,
     resume: bool,
+    delta: bool,
     profile: Option<ExportProfile>,
     source_input: String,
     quick_mode: bool,
@@ -305,6 +317,8 @@ fn resolve_file_options(
     let mut resolved_scale = scale.unwrap_or(config.export.default_scale);
     let mut resolved_llm_pack = llm_pack;
     let mut resolved_resume = resume;
+    let mut resolved_delta = delta;
+    let mut low_rate = false;
 
     if let Some(ExportProfile::PixelPerfect) = &profile {
         if !format_was_set {
@@ -318,6 +332,21 @@ fn resolve_file_options(
         }
         if !resume {
             resolved_resume = true;
+        }
+    }
+    if let Some(ExportProfile::LowRate) = &profile {
+        low_rate = true;
+        if !format_was_set {
+            resolved_format = ExportFormat::Png;
+        }
+        if !scale_was_set {
+            resolved_scale = 1.0;
+        }
+        if !resume {
+            resolved_resume = true;
+        }
+        if !delta {
+            resolved_delta = true;
         }
     }
 
@@ -347,7 +376,9 @@ fn resolve_file_options(
         llm_pack: resolved_llm_pack,
         manifest_name,
         resume: resolved_resume,
+        delta: resolved_delta,
         profile,
+        low_rate,
         source_input,
         quick_mode,
     })
@@ -386,6 +417,57 @@ async fn export_file(
         anyhow::bail!("No frames found to export");
     }
 
+    let resume_index_path = options.output.join(".fgm-export-index.json");
+    let mut resume_index = if options.resume || options.delta {
+        load_resume_index(&resume_index_path)?
+    } else {
+        ResumeIndex::default()
+    };
+
+    let current_file_version = if options.delta {
+        telemetry.api_calls = telemetry.api_calls.saturating_add(1);
+        client.get_file(file_key).await.ok().map(|file| file.version)
+    } else {
+        None
+    };
+
+    if should_skip_delta_export(
+        options,
+        &resume_index,
+        current_file_version.as_deref(),
+        &ids_to_export,
+        custom_name,
+    ) {
+        telemetry.elapsed_ms = start.elapsed().as_millis() as u64;
+        telemetry.skipped_writes = ids_to_export.len() as u64;
+        telemetry.rate_limits = Some(client.rate_limit_telemetry().await);
+
+        if output::format() == crate::output::OutputFormat::Json {
+            let summary = ExportJsonSummary {
+                file_key: file_key.to_string(),
+                source_input: options.source_input.clone(),
+                output_dir: options.output.display().to_string(),
+                format: options.format.clone(),
+                scale: options.scale,
+                asset_count: ids_to_export.len(),
+                quick_mode: options.quick_mode,
+                llm_pack: options.llm_pack,
+                delta: options.delta,
+                profile: options.profile.as_ref().map(profile_name),
+                telemetry,
+            };
+            output::print_json(&summary)?;
+        } else {
+            output::print_status(&format!(
+                "Delta mode: file version unchanged ({}), skipping export API calls",
+                current_file_version.as_deref().unwrap_or("unknown")
+            ));
+        }
+
+        output::print_success(&format!("Exported to {}", options.output.display()));
+        return Ok(());
+    }
+
     output::print_status(
         &format!(
             "Exporting {} node(s) as {} at {}x to {}...",
@@ -400,7 +482,7 @@ async fn export_file(
     output::print_status("Resolving image URLs with adaptive batching...");
 
     let mut all_images: HashMap<String, Option<String>> = HashMap::new();
-    let mut batch_size = INITIAL_BATCH_SIZE.min(ids_to_export.len().max(1));
+    let mut batch_size = initial_batch_size(options.low_rate, ids_to_export.len());
     let mut cursor = 0usize;
 
     while cursor < ids_to_export.len() {
@@ -442,8 +524,9 @@ async fn export_file(
                     if let Some(err) = &images.err {
                         if is_rate_limit_message(err) && retry_count < 3 {
                             retry_count += 1;
-                            batch_size = next_batch_size(batch_size, true, false);
-                            tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                            batch_size = next_batch_size_for_mode(batch_size, true, false, options);
+                            let delay_ms = retry_after_delay_ms(client, options).await;
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                             continue;
                         }
 
@@ -460,8 +543,9 @@ async fn export_file(
                     if is_rate_limit_message(&err.to_string()) && retry_count < 3 {
                         retry_count += 1;
                         saw_rate_limit = true;
-                        batch_size = next_batch_size(batch_size, true, false);
-                        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                        batch_size = next_batch_size_for_mode(batch_size, true, false, options);
+                        let delay_ms = retry_after_delay_ms(client, options).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                         continue;
                     }
                     return Err(err);
@@ -469,7 +553,7 @@ async fn export_file(
             }
         }
 
-        batch_size = next_batch_size(batch_size, saw_rate_limit, used_full_batch);
+        batch_size = next_batch_size_for_mode(batch_size, saw_rate_limit, used_full_batch, options);
         cursor = chunk_end;
         output::print_status(&format_resolution_progress(
             cursor,
@@ -511,12 +595,16 @@ async fn export_file(
         );
     }
     let total_assets = planned_assets.len();
+    let mut download_concurrency = client.download_parallelism().max(1);
+    if options.low_rate {
+        download_concurrency = download_concurrency.min(4).max(1);
+    }
     output::print_status(&format!(
         "Downloading {} image(s) with up to {} concurrent requests...",
-        total_assets, DOWNLOAD_CONCURRENCY
+        total_assets, download_concurrency
     ));
 
-    let semaphore = Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY));
+    let semaphore = Arc::new(Semaphore::new(download_concurrency));
     let mut joins = JoinSet::new();
 
     for asset in planned_assets {
@@ -568,13 +656,6 @@ async fn export_file(
         bar
     };
     output::print_status("Writing files to disk...");
-
-    let resume_index_path = options.output.join(".fgm-export-index.json");
-    let mut resume_index = if options.resume {
-        load_resume_index(&resume_index_path)?
-    } else {
-        ResumeIndex::default()
-    };
 
     let mut asset_records = Vec::new();
     for asset in downloaded {
@@ -631,7 +712,11 @@ async fn export_file(
 
     pb.finish_with_message("done");
 
-    if options.resume {
+    if let Some(version) = current_file_version {
+        resume_index.file_version = Some(version);
+    }
+
+    if options.resume || options.delta {
         save_resume_index(&resume_index_path, &resume_index)?;
     }
 
@@ -672,9 +757,7 @@ async fn export_file(
             file_key: file_key.to_string(),
             source_input: options.source_input.clone(),
             quick_mode: options.quick_mode,
-            profile: options.profile.as_ref().map(|p| match p {
-                ExportProfile::PixelPerfect => "pixel-perfect".to_string(),
-            }),
+            profile: options.profile.as_ref().map(profile_name),
             format: options.format.clone(),
             scale: options.scale,
             output_dir: options.output.display().to_string(),
@@ -699,6 +782,8 @@ async fn export_file(
             asset_count: asset_records.len(),
             quick_mode: options.quick_mode,
             llm_pack: options.llm_pack,
+            delta: options.delta,
+            profile: options.profile.as_ref().map(profile_name),
             telemetry: telemetry.clone(),
         };
         output::print_json(&summary)?;
@@ -752,6 +837,18 @@ fn save_resume_index(path: &Path, index: &ResumeIndex) -> Result<()> {
     Ok(())
 }
 
+fn profile_name(profile: &ExportProfile) -> String {
+    match profile {
+        ExportProfile::PixelPerfect => "pixel-perfect".to_string(),
+        ExportProfile::LowRate => "low-rate".to_string(),
+    }
+}
+
+fn initial_batch_size(low_rate: bool, total_nodes: usize) -> usize {
+    let base = if low_rate { 10 } else { INITIAL_BATCH_SIZE };
+    base.min(total_nodes.max(1))
+}
+
 fn next_batch_size(current: usize, saw_rate_limit: bool, filled_batch: bool) -> usize {
     if saw_rate_limit {
         return (current / 2).max(MIN_BATCH_SIZE);
@@ -760,6 +857,78 @@ fn next_batch_size(current: usize, saw_rate_limit: bool, filled_batch: bool) -> 
         return (current + 5).min(MAX_BATCH_SIZE);
     }
     current
+}
+
+fn next_batch_size_for_mode(
+    current: usize,
+    saw_rate_limit: bool,
+    filled_batch: bool,
+    options: &ResolvedFileOptions,
+) -> usize {
+    if !options.low_rate {
+        return next_batch_size(current, saw_rate_limit, filled_batch);
+    }
+
+    if saw_rate_limit {
+        return (current / 2).max(MIN_BATCH_SIZE);
+    }
+    if filled_batch {
+        return (current + 3).min(20);
+    }
+    current
+}
+
+async fn retry_after_delay_ms(client: &FigmaClient, options: &ResolvedFileOptions) -> u64 {
+    let fallback = if options.low_rate { 700 } else { 400 };
+    let telemetry = client.rate_limit_telemetry().await;
+    telemetry
+        .retry_after
+        .map(|seconds| seconds.saturating_mul(1000))
+        .unwrap_or(fallback)
+        .max(fallback)
+}
+
+fn should_skip_delta_export(
+    options: &ResolvedFileOptions,
+    resume_index: &ResumeIndex,
+    current_file_version: Option<&str>,
+    node_ids: &[String],
+    custom_name: Option<&str>,
+) -> bool {
+    if !(options.delta && options.resume) {
+        return false;
+    }
+
+    let Some(current_version) = current_file_version else {
+        return false;
+    };
+
+    if resume_index.file_version.as_deref() != Some(current_version) {
+        return false;
+    }
+
+    let use_custom_name = custom_name.is_some() && node_ids.len() == 1;
+    for (index, node_id) in node_ids.iter().enumerate() {
+        let filename = build_filename(
+            node_id,
+            index,
+            custom_name,
+            use_custom_name,
+            &options.format,
+        );
+        let output_path = options.output.join(&filename);
+        if !output_path.exists() {
+            return false;
+        }
+        let Some(entry) = resume_index.files.get(&filename) else {
+            return false;
+        };
+        if entry.node_id != *node_id {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn format_resolution_progress(resolved: usize, total: usize, next_batch: usize) -> String {
@@ -803,11 +972,26 @@ async fn list_top_level_frame_ids(client: &FigmaClient, file_key: &str) -> Resul
         }
     }
 
+    let shallow_cache_key = CacheKey::FileMeta(format!("{}:depth2", file_key));
+    if let Some((cached_shallow, _)) = client
+        .cache()
+        .get_with_freshness::<serde_json::Value>(&shallow_cache_key)
+    {
+        let ids = extract_frame_ids_from_json(&cached_shallow);
+        if !ids.is_empty() {
+            return Ok(ids);
+        }
+    }
+
     let shallow_url = format!("{}/files/{}?depth=2", client.base_url(), file_key);
-    let shallow: serde_json::Value = client.get_json(&shallow_url).await?;
-    let ids = extract_frame_ids_from_json(&shallow);
-    if !ids.is_empty() {
-        return Ok(ids);
+    if let Ok(shallow) = client.get_json::<serde_json::Value>(&shallow_url).await {
+        client
+            .cache()
+            .set(&shallow_cache_key, &shallow, CacheTTL::FILE_META_LIGHT);
+        let ids = extract_frame_ids_from_json(&shallow);
+        if !ids.is_empty() {
+            return Ok(ids);
+        }
     }
 
     let file = client.get_file(file_key).await?;
@@ -958,7 +1142,9 @@ async fn batch_export(client: &FigmaClient, manifest_path: &Path, config: &Confi
             llm_pack: false,
             manifest_name: "manifest.json".to_string(),
             resume: false,
+            delta: false,
             profile: None,
+            low_rate: false,
             source_input: export.file,
             quick_mode: false,
         };
@@ -1201,6 +1387,7 @@ mod tests {
             false,
             "manifest.json".to_string(),
             false,
+            false,
             Some(ExportProfile::PixelPerfect),
             "abc123".to_string(),
             false,
@@ -1211,6 +1398,67 @@ mod tests {
         assert_eq!(options.scale, 2.0);
         assert!(options.llm_pack);
         assert!(options.resume);
+    }
+
+    #[test]
+    fn low_rate_profile_applies_delta_and_resume_defaults() {
+        let config = Config::default();
+        let options = resolve_file_options(
+            &config,
+            None,
+            None,
+            None,
+            false,
+            "manifest.json".to_string(),
+            false,
+            false,
+            Some(ExportProfile::LowRate),
+            "abc123".to_string(),
+            true,
+        )
+        .expect("options should resolve");
+
+        assert_eq!(options.format, "png");
+        assert_eq!(options.scale, 1.0);
+        assert!(options.resume);
+        assert!(options.delta);
+        assert!(options.low_rate);
+    }
+
+    #[test]
+    fn delta_skip_requires_matching_version_and_outputs() {
+        let mut index = ResumeIndex::default();
+        index.file_version = Some("v1".to_string());
+        index.files.insert(
+            "1-2.png".to_string(),
+            ResumeIndexEntry {
+                node_id: "1:2".to_string(),
+                content_hash: "abc".to_string(),
+                updated_at: "2026-03-02T00:00:00Z".to_string(),
+            },
+        );
+
+        let options = ResolvedFileOptions {
+            format: "png".to_string(),
+            scale: 1.0,
+            output: PathBuf::from("."),
+            llm_pack: false,
+            manifest_name: "manifest.json".to_string(),
+            resume: true,
+            delta: true,
+            profile: Some(ExportProfile::LowRate),
+            low_rate: true,
+            source_input: "abc123".to_string(),
+            quick_mode: false,
+        };
+
+        assert!(!should_skip_delta_export(
+            &options,
+            &index,
+            Some("v1"),
+            &[String::from("1:2")],
+            None
+        ));
     }
 
     #[test]

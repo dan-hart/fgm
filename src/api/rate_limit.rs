@@ -7,6 +7,27 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
+/// API request class for endpoint-aware throttling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RequestClass {
+    Metadata,
+    Nodes,
+    Images,
+    Team,
+    Other,
+    Download,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RequestClassCounts {
+    pub metadata: u64,
+    pub nodes: u64,
+    pub images: u64,
+    pub team: u64,
+    pub other: u64,
+    pub download: u64,
+}
+
 /// Rate limit state tracking and retry logic
 pub struct RateLimiter {
     /// Current retry count
@@ -29,6 +50,20 @@ pub struct RateLimiter {
     total_rate_limited_responses: u64,
     /// Total proactive throttles performed
     total_proactive_throttles: u64,
+    /// Total milliseconds slept for proactive throttling
+    total_proactive_wait_ms: u64,
+    /// Per-class request counters
+    class_counts: RequestClassCounts,
+    /// Token bucket capacity
+    bucket_capacity: f64,
+    /// Current available tokens
+    available_tokens: f64,
+    /// Tokens refilled per second
+    bucket_refill_per_sec: f64,
+    /// Last refill timestamp
+    last_refill: std::time::Instant,
+    /// Remaining threshold for proactive slowdown
+    proactive_remaining_threshold: u32,
 }
 
 /// Information parsed from rate limit headers
@@ -49,8 +84,10 @@ pub struct RateLimitTelemetry {
     pub total_retries: u64,
     pub total_rate_limited_responses: u64,
     pub total_proactive_throttles: u64,
+    pub total_proactive_wait_ms: u64,
     pub remaining: Option<u32>,
     pub retry_after: Option<u64>,
+    pub request_class_counts: RequestClassCounts,
 }
 
 impl Default for RateLimiter {
@@ -66,6 +103,13 @@ impl Default for RateLimiter {
             total_retries: 0,
             total_rate_limited_responses: 0,
             total_proactive_throttles: 0,
+            total_proactive_wait_ms: 0,
+            class_counts: RequestClassCounts::default(),
+            bucket_capacity: 8.0,
+            available_tokens: 8.0,
+            bucket_refill_per_sec: 4.0,
+            last_refill: std::time::Instant::now(),
+            proactive_remaining_threshold: 12,
         }
     }
 }
@@ -89,12 +133,48 @@ impl RateLimiter {
             total_retries: 0,
             total_rate_limited_responses: 0,
             total_proactive_throttles: 0,
+            total_proactive_wait_ms: 0,
+            class_counts: RequestClassCounts::default(),
+            bucket_capacity: 8.0,
+            available_tokens: 8.0,
+            bucket_refill_per_sec: 4.0,
+            last_refill: std::time::Instant::now(),
+            proactive_remaining_threshold: 12,
         }
     }
 
+    /// Create a rate limiter with explicit token-bucket parameters.
+    pub fn with_budget(
+        max_retries: u32,
+        base_delay_ms: u64,
+        max_delay_ms: u64,
+        bucket_capacity: f64,
+        bucket_refill_per_sec: f64,
+    ) -> Self {
+        let mut limiter = Self::with_config(max_retries, base_delay_ms, max_delay_ms);
+        limiter.bucket_capacity = bucket_capacity.max(1.0);
+        limiter.available_tokens = limiter.bucket_capacity;
+        limiter.bucket_refill_per_sec = bucket_refill_per_sec.max(0.1);
+        limiter
+    }
+
     /// Record a request attempt before dispatching HTTP.
-    pub fn record_request_attempt(&mut self) {
+    pub fn record_request_attempt(&mut self, class: RequestClass) {
         self.total_requests = self.total_requests.saturating_add(1);
+        match class {
+            RequestClass::Metadata => {
+                self.class_counts.metadata = self.class_counts.metadata.saturating_add(1)
+            }
+            RequestClass::Nodes => self.class_counts.nodes = self.class_counts.nodes.saturating_add(1),
+            RequestClass::Images => {
+                self.class_counts.images = self.class_counts.images.saturating_add(1)
+            }
+            RequestClass::Team => self.class_counts.team = self.class_counts.team.saturating_add(1),
+            RequestClass::Other => self.class_counts.other = self.class_counts.other.saturating_add(1),
+            RequestClass::Download => {
+                self.class_counts.download = self.class_counts.download.saturating_add(1)
+            }
+        }
     }
 
     /// Record a 429 rate-limited response.
@@ -133,7 +213,7 @@ impl RateLimiter {
 
     /// Check if we're approaching rate limits (proactive throttling)
     pub fn should_throttle(&self) -> bool {
-        matches!(self.remaining, Some(remaining) if remaining < 10)
+        matches!(self.remaining, Some(remaining) if remaining < self.proactive_remaining_threshold)
     }
 
     /// Calculate delay with exponential backoff and jitter
@@ -184,11 +264,54 @@ impl RateLimiter {
         self.retry_after = None;
     }
 
-    /// Proactive delay when approaching limits
-    pub async fn proactive_delay(&mut self) {
-        if self.should_throttle() {
-            let delay = Duration::from_millis(500);
+    fn class_token_cost(class: RequestClass) -> f64 {
+        match class {
+            RequestClass::Metadata => 1.0,
+            RequestClass::Nodes => 1.5,
+            RequestClass::Images => 2.0,
+            RequestClass::Team => 1.25,
+            RequestClass::Other => 1.0,
+            RequestClass::Download => 0.25,
+        }
+    }
+
+    fn refill_bucket(&mut self) {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        if elapsed <= 0.0 {
+            return;
+        }
+
+        let replenished = elapsed * self.bucket_refill_per_sec;
+        self.available_tokens = (self.available_tokens + replenished).min(self.bucket_capacity);
+        self.last_refill = now;
+    }
+
+    /// Proactive delay based on token budget and remaining-header pressure.
+    pub async fn proactive_delay(&mut self, class: RequestClass) {
+        self.refill_bucket();
+
+        let cost = Self::class_token_cost(class);
+        if self.available_tokens < cost {
+            let deficit = cost - self.available_tokens;
+            let delay_secs = deficit / self.bucket_refill_per_sec;
+            let delay = Duration::from_secs_f64(delay_secs.max(0.05));
             self.total_proactive_throttles = self.total_proactive_throttles.saturating_add(1);
+            self.total_proactive_wait_ms = self
+                .total_proactive_wait_ms
+                .saturating_add(delay.as_millis() as u64);
+            sleep(delay).await;
+            self.refill_bucket();
+        }
+
+        self.available_tokens = (self.available_tokens - cost).max(0.0);
+
+        if self.should_throttle() && !matches!(class, RequestClass::Download) {
+            let delay = Duration::from_millis(350);
+            self.total_proactive_throttles = self.total_proactive_throttles.saturating_add(1);
+            self.total_proactive_wait_ms = self
+                .total_proactive_wait_ms
+                .saturating_add(delay.as_millis() as u64);
             sleep(delay).await;
         }
     }
@@ -200,8 +323,10 @@ impl RateLimiter {
             total_retries: self.total_retries,
             total_rate_limited_responses: self.total_rate_limited_responses,
             total_proactive_throttles: self.total_proactive_throttles,
+            total_proactive_wait_ms: self.total_proactive_wait_ms,
             remaining: self.remaining,
             retry_after: self.retry_after,
+            request_class_counts: self.class_counts.clone(),
         }
     }
 
@@ -282,8 +407,8 @@ mod tests {
     #[test]
     fn test_telemetry_snapshot_counts_requests_and_retries() {
         let mut limiter = RateLimiter::new();
-        limiter.record_request_attempt();
-        limiter.record_request_attempt();
+        limiter.record_request_attempt(RequestClass::Metadata);
+        limiter.record_request_attempt(RequestClass::Images);
         limiter.record_rate_limited_response();
         limiter.total_retries = 3;
         limiter.total_proactive_throttles = 2;
@@ -293,5 +418,31 @@ mod tests {
         assert_eq!(snapshot.total_retries, 3);
         assert_eq!(snapshot.total_rate_limited_responses, 1);
         assert_eq!(snapshot.total_proactive_throttles, 2);
+        assert_eq!(snapshot.request_class_counts.metadata, 1);
+        assert_eq!(snapshot.request_class_counts.images, 1);
+    }
+
+    #[test]
+    fn test_request_class_counters() {
+        let mut limiter = RateLimiter::new();
+        limiter.record_request_attempt(RequestClass::Metadata);
+        limiter.record_request_attempt(RequestClass::Nodes);
+        limiter.record_request_attempt(RequestClass::Nodes);
+        limiter.record_request_attempt(RequestClass::Download);
+
+        let snapshot = limiter.telemetry_snapshot();
+        assert_eq!(snapshot.request_class_counts.metadata, 1);
+        assert_eq!(snapshot.request_class_counts.nodes, 2);
+        assert_eq!(snapshot.request_class_counts.download, 1);
+    }
+
+    #[tokio::test]
+    async fn test_token_bucket_waits_when_depleted() {
+        let mut limiter = RateLimiter::with_budget(1, 1000, 2000, 1.0, 100.0);
+        limiter.available_tokens = 0.0;
+        limiter.proactive_delay(RequestClass::Images).await;
+        let snapshot = limiter.telemetry_snapshot();
+        assert!(snapshot.total_proactive_throttles >= 1);
+        assert!(snapshot.total_proactive_wait_ms > 0);
     }
 }
