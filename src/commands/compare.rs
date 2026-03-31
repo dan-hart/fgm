@@ -1,5 +1,6 @@
 use crate::cli::CompareArgs;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportSummary};
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use image::{GenericImageView, Rgba};
@@ -17,6 +18,7 @@ pub async fn run(args: CompareArgs) -> Result<()> {
             &args.image2,
             args.output.as_deref(),
             args.report.as_deref(),
+            args.report_format,
             args.threshold,
             args.tolerance,
             args.fast,
@@ -27,6 +29,8 @@ pub async fn run(args: CompareArgs) -> Result<()> {
             &args.image1,
             &args.image2,
             args.output.as_deref(),
+            args.report.as_deref(),
+            args.report_format,
             args.threshold,
             args.tolerance,
             args.fast,
@@ -39,6 +43,8 @@ async fn single_compare(
     image1_path: &Path,
     image2_path: &Path,
     output_path: Option<&Path>,
+    report_path: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
     threshold: f32,
     tolerance: u8,
     fast: bool,
@@ -75,6 +81,24 @@ async fn single_compare(
 
     let diff_percent = result.diff_percent;
     let passed = diff_percent <= threshold;
+    let report_summary = ReportSummary {
+        title: "fgm compare".to_string(),
+        items: vec![ReportItem::new(
+            image2_path.display().to_string(),
+            if passed {
+                crate::reporting::ReportStatus::Ok
+            } else {
+                crate::reporting::ReportStatus::Fail
+            },
+            format!(
+                "Compared {} against {} ({:.2}% diff, threshold {:.2}%)",
+                image1_path.display(),
+                image2_path.display(),
+                diff_percent,
+                threshold
+            ),
+        )],
+    };
 
     if passed {
         output::print_status(&format!(
@@ -120,6 +144,14 @@ async fn single_compare(
         output::print_json(&result)?;
     }
 
+    if let Some(report) = report_path {
+        write_report(report, report_format, &report_summary)?;
+        output::print_status(&format!(
+            "  Report: {}",
+            report.display().to_string().cyan()
+        ));
+    }
+
     if !passed {
         anyhow::bail!("Pixel diff exceeded threshold");
     }
@@ -132,6 +164,7 @@ async fn batch_compare(
     dir2: &Path,
     output_dir: Option<&Path>,
     report_path: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
     threshold: f32,
     tolerance: u8,
     fast: bool,
@@ -237,8 +270,28 @@ async fn batch_compare(
     };
 
     if let Some(report) = report_path {
-        let json = serde_json::to_string_pretty(&report_data)?;
-        fs::write(report, json)?;
+        let summary = ReportSummary {
+            title: "fgm compare batch".to_string(),
+            items: report_data
+                .results
+                .iter()
+                .map(|result| {
+                    ReportItem::new(
+                        &result.file,
+                        if result.passed {
+                            crate::reporting::ReportStatus::Ok
+                        } else {
+                            crate::reporting::ReportStatus::Fail
+                        },
+                        format!(
+                            "{:.2}% diff (dimensions_match={}, early_exit={})",
+                            result.diff_percent, result.dimensions_match, result.early_exit
+                        ),
+                    )
+                })
+                .collect(),
+        };
+        write_report(report, report_format, &summary)?;
         output::print_status(&format!(
             "  Report: {}",
             report.display().to_string().cyan()

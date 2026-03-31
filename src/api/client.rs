@@ -242,9 +242,7 @@ impl FigmaClient {
         T: for<'de> serde::Deserialize<'de>,
     {
         let class = Self::classify_url(url);
-        let response = self
-            .execute_request(class, || self.client.get(url))
-            .await?;
+        let response = self.execute_request(class, || self.client.get(url)).await?;
 
         if !response.status().is_success() {
             let status = response.status();

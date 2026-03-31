@@ -4,6 +4,8 @@ use crate::cli::CompareUrlArgs;
 use crate::commands::compare;
 use crate::config::Config;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportStatus, ReportSummary};
+use crate::watch;
 use anyhow::Result;
 use colored::Colorize;
 use serde::Serialize;
@@ -12,6 +14,31 @@ use std::fs;
 /// Compare a Figma design directly against a screenshot
 /// Exports the Figma frame and runs pixel comparison in one command
 pub async fn run(args: CompareUrlArgs) -> Result<()> {
+    if args.watch {
+        let token = get_token()?;
+        let client = FigmaClient::new(token)?;
+        let parsed = FigmaUrl::parse(&args.figma_url)?;
+        run_once(&args).await?;
+
+        let watch_client = client.clone();
+        let rerun_args = args.clone();
+        watch::watch_file_changes(
+            &watch_client,
+            &parsed.file_key,
+            args.watch_interval,
+            move || {
+                let rerun_args = rerun_args.clone();
+                async move { run_once(&rerun_args).await }
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    run_once(&args).await
+}
+
+async fn run_once(args: &CompareUrlArgs) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
     let config = Config::load().unwrap_or_default();
@@ -98,6 +125,20 @@ pub async fn run(args: CompareUrlArgs) -> Result<()> {
             output::print_json(&out)?;
         }
 
+        if let Some(report_path) = args.report.as_deref() {
+            let summary = ReportSummary {
+                title: "fgm compare-url".to_string(),
+                items: vec![ReportItem::fail(
+                    node_id.clone(),
+                    format!(
+                        "Dimension mismatch comparing exported frame against {}",
+                        args.screenshot.display()
+                    ),
+                )],
+            };
+            write_report(report_path, args.report_format, &summary)?;
+        }
+
         // Clean up temp file
         let _ = fs::remove_file(&figma_path);
 
@@ -157,6 +198,27 @@ pub async fn run(args: CompareUrlArgs) -> Result<()> {
             diff_image: args.output.as_ref().map(|p| p.display().to_string()),
         };
         output::print_json(&out)?;
+    }
+
+    if let Some(report_path) = args.report.as_deref() {
+        let summary = ReportSummary {
+            title: "fgm compare-url".to_string(),
+            items: vec![ReportItem::new(
+                node_id.clone(),
+                if diff_percent <= args.threshold {
+                    ReportStatus::Ok
+                } else {
+                    ReportStatus::Fail
+                },
+                format!(
+                    "{:.2}% diff against {}",
+                    diff_percent,
+                    args.screenshot.display()
+                ),
+            )],
+        };
+        write_report(report_path, args.report_format, &summary)?;
+        output::print_status(&format!("  Report: {}", report_path.display()));
     }
 
     // Clean up temp file

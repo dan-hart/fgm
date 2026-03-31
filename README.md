@@ -63,6 +63,12 @@ Token resolution order:
 ## Quick Start
 
 ```bash
+# Diagnose local setup
+fgm doctor
+
+# Bootstrap a local workspace
+fgm init .
+
 # Export all top-level screens from a Figma URL (quick mode)
 fgm "https://www.figma.com/design/abc123/MyFile"
 
@@ -112,6 +118,10 @@ fgm compare-url "https://www.figma.com/design/abc123/MyFile?node-id=1-2" app-scr
 ## Other Useful Commands
 
 ```bash
+# Local workspace setup
+fgm init . --figma "https://www.figma.com/design/abc123/MyFile"
+fgm doctor --report ./.fgm/reports/doctor.html --report-format html
+
 # File inspection
 fgm files get "https://www.figma.com/design/abc123/MyFile"
 fgm files tree abc123 --depth 3
@@ -119,17 +129,30 @@ fgm files versions abc123 --limit 10
 
 # Local image comparison
 fgm compare design.png screenshot.png --threshold 5 --output diff.png
+fgm compare design.png screenshot.png --report compare.md --report-format md
 
 # Token export
 fgm tokens export abc123 --format css -o tokens.css
+fgm tokens export abc123 --format tailwind -o tailwind.tokens.js
+fgm tokens export abc123 --format style-dictionary -o tokens.sd.json
+fgm tokens export abc123 --format android-xml -o values/fgm_tokens.xml
 
 # Terminal preview
 fgm preview abc123 --node "1:2"
+fgm preview abc123 --pick
 
 # Cache utilities
 fgm cache status
 fgm cache warmup abc123 --include-images
 fgm cache clear --file abc123
+
+# Watch mode
+fgm export file abc123 --pick --watch -o ./exports/
+fgm compare-url "https://www.figma.com/design/abc123/MyFile?node-id=1-2" screenshot.png --watch
+
+# Mapping and orchestration
+fgm map verify -m .fgm/components.toml --report ./.fgm/reports/map.html --report-format html
+fgm run jobs.toml --report ./.fgm/reports/run.json
 ```
 
 ## Current Rate-Limit Strategy (Built In)

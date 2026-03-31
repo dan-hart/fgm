@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::output::OutputFormat;
+use crate::reporting::ReportFormat;
 
 #[derive(Parser)]
 #[command(name = "fgm")]
@@ -82,6 +83,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Diagnose local setup, auth, config, and project health
+    Doctor(DoctorArgs),
+
+    /// Bootstrap a local fgm workspace in the current project
+    Init(InitArgs),
+
     /// Manage authentication (login, logout, status)
     Auth {
         #[command(subcommand)]
@@ -207,6 +214,9 @@ MANIFEST FORMAT:
         #[command(subcommand)]
         command: ConfigCommands,
     },
+
+    /// Run a batch manifest with multiple export, compare, sync, or snapshot jobs
+    Run(RunArgs),
 
     /// Quick export mode: fgm "<figma-url-or-file-key>"
     #[command(external_subcommand)]
@@ -427,6 +437,9 @@ Use --llm-pack to emit a manifest.json for LLM workflows.")]
         /// Export all top-level frames in the file
         #[arg(long, conflicts_with = "node", help = "Export every top-level frame")]
         all_frames: bool,
+        /// Interactively pick node IDs from the top-level frame list
+        #[arg(long, conflicts_with = "all_frames", help = "Pick nodes interactively")]
+        pick: bool,
         /// Image format: png, svg, pdf, jpg
         #[arg(short, long, help = "Output format")]
         format: Option<ExportFormat>,
@@ -467,6 +480,17 @@ Use --llm-pack to emit a manifest.json for LLM workflows.")]
         /// Apply a preset export profile
         #[arg(long, value_enum, help = "Export profile preset")]
         profile: Option<ExportProfile>,
+        /// Re-run the export when the Figma file version changes
+        #[arg(long, help = "Watch for file version changes and re-run the export")]
+        watch: bool,
+        /// Poll interval in seconds for --watch
+        #[arg(
+            long,
+            default_value = "5",
+            requires = "watch",
+            help = "Polling interval in seconds for --watch"
+        )]
+        watch_interval: u64,
     },
 
     /// Batch export from a TOML manifest file
@@ -537,6 +561,43 @@ pub enum ExportProfile {
     LowRate,
 }
 
+#[derive(clap::Args, Debug)]
+pub struct DoctorArgs {
+    /// Validate that this output directory is writable
+    #[arg(long, help = "Check whether this output directory is writable")]
+    pub output_dir: Option<PathBuf>,
+    /// Write a machine-readable report to this path
+    #[arg(long, help = "Write a doctor report to this path")]
+    pub report: Option<PathBuf>,
+    /// Report format for --report
+    #[arg(
+        long,
+        default_value = "json",
+        requires = "report",
+        help = "Report format for --report"
+    )]
+    pub report_format: ReportFormat,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct InitArgs {
+    /// Directory to initialize (defaults to current directory)
+    #[arg(help = "Workspace directory to initialize", default_value = ".")]
+    pub path: PathBuf,
+    /// Project name written to fgm.toml
+    #[arg(long, help = "Project name to write into the workspace config")]
+    pub name: Option<String>,
+    /// Seed the project config with a Figma file key or URL
+    #[arg(long, help = "Seed the project config with a Figma source")]
+    pub figma: Option<String>,
+    /// Overwrite existing generated files
+    #[arg(long, help = "Overwrite existing generated files")]
+    pub force: bool,
+    /// Enable guided prompts when running in a TTY
+    #[arg(long, help = "Use guided prompts for optional fields")]
+    pub interactive: bool,
+}
+
 // Compare arguments
 #[derive(clap::Args)]
 pub struct CompareArgs {
@@ -573,8 +634,16 @@ pub struct CompareArgs {
     #[arg(long, help = "Treat paths as directories, compare matching filenames")]
     pub batch: bool,
     /// Save JSON report to this path
-    #[arg(short, long, help = "Save comparison results as JSON")]
+    #[arg(short, long, help = "Save comparison results to a report file")]
     pub report: Option<PathBuf>,
+    /// Report format for --report
+    #[arg(
+        long,
+        default_value = "json",
+        requires = "report",
+        help = "Report format for --report"
+    )]
+    pub report_format: ReportFormat,
 }
 
 // Tokens subcommands
@@ -645,6 +714,9 @@ pub enum TokenFormat {
     Css,
     Swift,
     Kotlin,
+    Tailwind,
+    StyleDictionary,
+    AndroidXml,
 }
 
 // Components subcommands
@@ -682,7 +754,7 @@ The component key can be found in the component panel or via 'components list'."
 }
 
 // Preview arguments
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct PreviewArgs {
     /// Figma file key or URL
     #[arg(help = "File key (abc123) or Figma URL")]
@@ -690,6 +762,9 @@ pub struct PreviewArgs {
     /// Specific node to preview (defaults to first frame)
     #[arg(short, long, help = "Node ID to preview (e.g., \"1:2\")")]
     pub node: Option<String>,
+    /// Interactively pick a top-level frame to preview
+    #[arg(long, help = "Pick a top-level frame interactively")]
+    pub pick: bool,
     /// Terminal width in columns (auto-detected if not specified)
     #[arg(short, long, help = "Output width in terminal columns")]
     pub width: Option<u32>,
@@ -719,7 +794,7 @@ impl ImageProtocol {
 }
 
 // Compare URL arguments - export from Figma and compare in one command
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct CompareUrlArgs {
     /// Figma URL with node-id (required)
     #[arg(help = "Figma URL with ?node-id= parameter")]
@@ -758,6 +833,31 @@ pub struct CompareUrlArgs {
     /// Stop early once threshold is exceeded (faster, approximate diff)
     #[arg(long, help = "Stop early once threshold is exceeded (faster)")]
     pub fast: bool,
+    /// Write a report to this path
+    #[arg(long, help = "Save comparison results to a report file")]
+    pub report: Option<PathBuf>,
+    /// Report format for --report
+    #[arg(
+        long,
+        default_value = "json",
+        requires = "report",
+        help = "Report format for --report"
+    )]
+    pub report_format: ReportFormat,
+    /// Re-run the comparison when the Figma file version changes
+    #[arg(
+        long,
+        help = "Watch for file version changes and re-run the comparison"
+    )]
+    pub watch: bool,
+    /// Poll interval in seconds for --watch
+    #[arg(
+        long,
+        default_value = "5",
+        requires = "watch",
+        help = "Polling interval in seconds for --watch"
+    )]
+    pub watch_interval: u64,
 }
 
 // Snapshot subcommands
@@ -784,6 +884,9 @@ Use snapshots to track design changes over time and compare versions."
         /// Specific nodes to snapshot (defaults to all frames)
         #[arg(long, help = "Node IDs to include (repeatable)")]
         node: Vec<String>,
+        /// Interactively pick nodes from the top-level frame list
+        #[arg(long, help = "Pick nodes interactively")]
+        pick: bool,
         /// Directory to store snapshots
         #[arg(
             short,
@@ -792,6 +895,20 @@ Use snapshots to track design changes over time and compare versions."
             help = "Snapshot storage directory"
         )]
         output: PathBuf,
+        /// Re-run the snapshot when the Figma file version changes
+        #[arg(
+            long,
+            help = "Watch for file version changes and refresh this snapshot"
+        )]
+        watch: bool,
+        /// Poll interval in seconds for --watch
+        #[arg(
+            long,
+            default_value = "5",
+            requires = "watch",
+            help = "Polling interval in seconds for --watch"
+        )]
+        watch_interval: u64,
     },
 
     /// List all existing snapshots
@@ -835,6 +952,17 @@ Optionally generates visual diff images for changed frames.")]
         /// Save diff images to this directory
         #[arg(short, long, help = "Generate visual diff images")]
         output: Option<PathBuf>,
+        /// Write a diff report to this path
+        #[arg(long, help = "Save diff results to a report file")]
+        report: Option<PathBuf>,
+        /// Report format for --report
+        #[arg(
+            long,
+            default_value = "json",
+            requires = "report",
+            help = "Report format for --report"
+        )]
+        report_format: ReportFormat,
     },
 }
 
@@ -850,6 +978,35 @@ pub struct SyncArgs {
     /// Force re-download even if files exist
     #[arg(long, help = "Re-download all assets, even if unchanged")]
     pub force: bool,
+    /// Write a sync report to this path
+    #[arg(long, help = "Save sync results to a report file")]
+    pub report: Option<PathBuf>,
+    /// Report format for --report
+    #[arg(
+        long,
+        default_value = "json",
+        requires = "report",
+        help = "Report format for --report"
+    )]
+    pub report_format: ReportFormat,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct RunArgs {
+    /// Path to the orchestration manifest
+    #[arg(help = "Path to the TOML job manifest")]
+    pub manifest: PathBuf,
+    /// Save orchestration results to a report file
+    #[arg(long, help = "Write a run summary report to this path")]
+    pub report: Option<PathBuf>,
+    /// Report format for --report
+    #[arg(
+        long,
+        default_value = "json",
+        requires = "report",
+        help = "Report format for --report"
+    )]
+    pub report_format: ReportFormat,
 }
 
 // Map subcommands - component to code mapping
@@ -869,6 +1026,9 @@ This is the first step in setting up design-to-code tracking."
         /// Figma file key or URL
         #[arg(help = "File key (abc123) or Figma URL")]
         file_key_or_url: String,
+        /// Interactively choose which components to include
+        #[arg(long, help = "Pick components interactively")]
+        pick: bool,
         /// Output file path
         #[arg(
             short,
@@ -917,6 +1077,29 @@ that have been modified since last sync."
             help = "Path to component map"
         )]
         map: PathBuf,
+    },
+
+    /// Verify map health against local code paths and current Figma components
+    Verify {
+        /// Component map file
+        #[arg(
+            short,
+            long,
+            default_value = "figma-components.toml",
+            help = "Path to component map"
+        )]
+        map: PathBuf,
+        /// Save verification results to a report file
+        #[arg(long, help = "Write a verification report to this path")]
+        report: Option<PathBuf>,
+        /// Report format for --report
+        #[arg(
+            long,
+            default_value = "json",
+            requires = "report",
+            help = "Report format for --report"
+        )]
+        report_format: ReportFormat,
     },
 
     /// Link a Figma component to its code implementation
@@ -1027,9 +1210,7 @@ mod tests {
         let help = cmd.render_long_help().to_string();
 
         assert!(help.contains("fgm \"https://www.figma.com/design/abc123/MyFile\""));
-        assert!(
-            help.contains("Default quick export: all top-level frames as PNG to ./fgm-exports")
-        );
+        assert!(help.contains("Default quick export: all top-level frames as PNG to ./fgm-exports"));
     }
 
     #[test]
@@ -1122,15 +1303,91 @@ mod tests {
 
         match cli.command {
             Commands::Export {
-                command:
-                    ExportCommands::File {
-                        profile, delta, ..
-                    },
+                command: ExportCommands::File { profile, delta, .. },
             } => {
                 assert!(matches!(profile, Some(ExportProfile::LowRate)));
                 assert!(delta);
             }
             _ => panic!("expected export file"),
+        }
+    }
+
+    #[test]
+    fn parses_doctor_command_with_report_flags() {
+        let cli = Cli::try_parse_from([
+            "fgm",
+            "doctor",
+            "--report",
+            "doctor.json",
+            "--report-format",
+            "html",
+        ])
+        .expect("doctor command should parse");
+
+        match cli.command {
+            Commands::Doctor(args) => {
+                assert_eq!(args.report.unwrap(), PathBuf::from("doctor.json"));
+                assert!(matches!(args.report_format, ReportFormat::Html));
+            }
+            _ => panic!("expected doctor command"),
+        }
+    }
+
+    #[test]
+    fn parses_init_command_with_path() {
+        let cli = Cli::try_parse_from(["fgm", "init", "./demo", "--force"])
+            .expect("init command should parse");
+
+        match cli.command {
+            Commands::Init(args) => {
+                assert_eq!(args.path, PathBuf::from("./demo"));
+                assert!(args.force);
+            }
+            _ => panic!("expected init command"),
+        }
+    }
+
+    #[test]
+    fn parses_export_pick_and_watch_flags() {
+        let cli = Cli::try_parse_from([
+            "fgm",
+            "export",
+            "file",
+            "abc123",
+            "--pick",
+            "--watch",
+            "--watch-interval",
+            "9",
+        ])
+        .expect("export watch command should parse");
+
+        match cli.command {
+            Commands::Export {
+                command:
+                    ExportCommands::File {
+                        pick,
+                        watch,
+                        watch_interval,
+                        ..
+                    },
+            } => {
+                assert!(pick);
+                assert!(watch);
+                assert_eq!(watch_interval, 9);
+            }
+            _ => panic!("expected export file"),
+        }
+    }
+
+    #[test]
+    fn parses_run_command() {
+        let cli = Cli::try_parse_from(["fgm", "run", "jobs.toml"]).expect("run should parse");
+
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.manifest, PathBuf::from("jobs.toml"));
+            }
+            _ => panic!("expected run command"),
         }
     }
 }

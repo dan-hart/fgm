@@ -4,6 +4,8 @@ use crate::auth::get_token;
 use crate::cli::{ExportCommands, ExportFormat, ExportProfile, Platform};
 use crate::config::Config;
 use crate::output;
+use crate::select;
+use crate::watch;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use colored::Colorize;
@@ -112,6 +114,8 @@ struct DownloadedAsset {
 struct NodeContext {
     node_name: String,
     page_name: Option<String>,
+    node_type: String,
+    node_path: String,
     source_width: Option<u32>,
     source_height: Option<u32>,
 }
@@ -121,6 +125,8 @@ struct ExportedAssetRecord {
     node_id: String,
     node_name: String,
     page_name: Option<String>,
+    node_type: Option<String>,
+    node_path: Option<String>,
     filename: String,
     relative_path: String,
     source_image_url: String,
@@ -135,9 +141,11 @@ struct ExportedAssetRecord {
 
 #[derive(Debug, Serialize)]
 struct LlmPackManifest {
+    schema_version: u8,
     generated_at: String,
     file_key: String,
     source_input: String,
+    source_kind: String,
     quick_mode: bool,
     profile: Option<String>,
     format: String,
@@ -193,6 +201,7 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             file_key_or_url,
             node,
             all_frames,
+            pick,
             format,
             scale,
             output,
@@ -203,6 +212,8 @@ pub async fn run(command: ExportCommands) -> Result<()> {
             resume,
             delta,
             profile,
+            watch: should_watch,
+            watch_interval,
         } => {
             let parsed = FigmaUrl::parse(&file_key_or_url)?;
             let mut node_ids = node;
@@ -210,6 +221,13 @@ pub async fn run(command: ExportCommands) -> Result<()> {
                 if !node_ids.contains(&url_node_id) {
                     node_ids.push(url_node_id);
                 }
+            }
+
+            if pick {
+                let file = client.get_file(&parsed.file_key).await?;
+                let options = select::top_level_frame_options(&file.document);
+                let picked = select::pick_options(&options, true)?;
+                node_ids = picked.into_iter().map(|item| item.id).collect();
             }
 
             let options = resolve_file_options(
@@ -226,31 +244,79 @@ pub async fn run(command: ExportCommands) -> Result<()> {
                 false,
             )?;
 
-            if let Some(platform) = platform {
+            let file_key = parsed.file_key.clone();
+            if let Some(platform) = platform.clone() {
                 if options.llm_pack {
                     output::print_warning("--llm-pack is ignored for --platform exports");
                 }
                 export_platform(
                     &client,
-                    &parsed.file_key,
+                    &file_key,
                     &node_ids,
                     all_frames,
                     &options.output,
                     name.as_deref(),
                     platform,
                 )
-                .await
+                .await?;
             } else {
                 export_file(
                     &client,
-                    &parsed.file_key,
+                    &file_key,
                     &node_ids,
                     all_frames,
                     name.as_deref(),
                     &options,
                 )
-                .await
+                .await?;
             }
+
+            if should_watch {
+                let watch_client = client.clone();
+                let run_client = client.clone();
+                let file_key_watch = file_key.clone();
+                let watch_key = file_key_watch.clone();
+                let node_ids_watch = node_ids.clone();
+                let name_watch = name.clone();
+                let platform_watch = platform.clone();
+                let options_watch = options.clone();
+
+                watch::watch_file_changes(&watch_client, &watch_key, watch_interval, move || {
+                    let run_client = run_client.clone();
+                    let file_key = file_key_watch.clone();
+                    let node_ids = node_ids_watch.clone();
+                    let name = name_watch.clone();
+                    let platform = platform_watch.clone();
+                    let options = options_watch.clone();
+                    async move {
+                        if let Some(platform) = platform {
+                            export_platform(
+                                &run_client,
+                                &file_key,
+                                &node_ids,
+                                all_frames,
+                                &options.output,
+                                name.as_deref(),
+                                platform,
+                            )
+                            .await
+                        } else {
+                            export_file(
+                                &run_client,
+                                &file_key,
+                                &node_ids,
+                                all_frames,
+                                name.as_deref(),
+                                &options,
+                            )
+                            .await
+                        }
+                    }
+                })
+                .await?;
+            }
+
+            Ok(())
         }
         ExportCommands::Batch { manifest } => batch_export(&client, &manifest, &config).await,
     }
@@ -426,7 +492,11 @@ async fn export_file(
 
     let current_file_version = if options.delta {
         telemetry.api_calls = telemetry.api_calls.saturating_add(1);
-        client.get_file(file_key).await.ok().map(|file| file.version)
+        client
+            .get_file(file_key)
+            .await
+            .ok()
+            .map(|file| file.version)
     } else {
         None
     };
@@ -694,6 +764,8 @@ async fn export_file(
             node_id: asset.node_id,
             node_name: String::new(),
             page_name: None,
+            node_type: None,
+            node_path: None,
             filename: asset.filename.clone(),
             relative_path: asset.filename.clone(),
             source_image_url: asset.image_url,
@@ -740,6 +812,8 @@ async fn export_file(
         if let Some(ctx) = node_context.get(&record.node_id) {
             record.node_name = ctx.node_name.clone();
             record.page_name = ctx.page_name.clone();
+            record.node_type = Some(ctx.node_type.clone());
+            record.node_path = Some(ctx.node_path.clone());
             record.source_width = ctx.source_width;
             record.source_height = ctx.source_height;
         } else {
@@ -753,9 +827,15 @@ async fn export_file(
     if options.llm_pack {
         let manifest_path = options.output.join(&options.manifest_name);
         let manifest = LlmPackManifest {
+            schema_version: 2,
             generated_at: chrono::Utc::now().to_rfc3339(),
             file_key: file_key.to_string(),
             source_input: options.source_input.clone(),
+            source_kind: if options.source_input.starts_with("http") {
+                "url".to_string()
+            } else {
+                "file_key".to_string()
+            },
             quick_mode: options.quick_mode,
             profile: options.profile.as_ref().map(profile_name),
             format: options.format.clone(),
@@ -1058,7 +1138,12 @@ fn build_node_context_map(document: &crate::api::types::Document) -> HashMap<Str
             let page_name = page.name.clone();
             if let Some(children) = &page.children {
                 for node in children {
-                    collect_node_context(node, Some(&page_name), &mut map);
+                    collect_node_context(
+                        node,
+                        Some(&page_name),
+                        &format!("{}/{}", page_name, node.name),
+                        &mut map,
+                    );
                 }
             }
         }
@@ -1069,6 +1154,7 @@ fn build_node_context_map(document: &crate::api::types::Document) -> HashMap<Str
 fn collect_node_context(
     node: &crate::api::types::Node,
     page_name: Option<&str>,
+    node_path: &str,
     out: &mut HashMap<String, NodeContext>,
 ) {
     let (source_width, source_height) = node
@@ -1087,6 +1173,8 @@ fn collect_node_context(
         NodeContext {
             node_name: node.name.clone(),
             page_name: page_name.map(str::to_string),
+            node_type: node.node_type.clone(),
+            node_path: node_path.to_string(),
             source_width,
             source_height,
         },
@@ -1094,7 +1182,12 @@ fn collect_node_context(
 
     if let Some(children) = &node.children {
         for child in children {
-            collect_node_context(child, page_name, out);
+            collect_node_context(
+                child,
+                page_name,
+                &format!("{}/{}", node_path, child.name),
+                out,
+            );
         }
     }
 }
@@ -1481,9 +1574,6 @@ mod tests {
 
     #[test]
     fn download_progress_message_is_readable() {
-        assert_eq!(
-            format_download_progress(12, 40),
-            "Downloaded images: 12/40"
-        );
+        assert_eq!(format_download_progress(12, 40), "Downloaded images: 12/40");
     }
 }
