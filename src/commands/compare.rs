@@ -201,6 +201,14 @@ async fn batch_compare(
                 "missing in screenshot dir"
             ));
             failed += 1;
+            results.push(CompareResult {
+                file: filename.to_string_lossy().to_string(),
+                diff_percent: 100.0,
+                passed: false,
+                dimensions_match: false,
+                early_exit: false,
+                message: Some("missing in screenshot dir".to_string()),
+            });
             continue;
         }
 
@@ -253,6 +261,7 @@ async fn batch_compare(
             passed: passes,
             dimensions_match: diff_result.dimensions_match,
             early_exit: diff_result.early_exit,
+            message: None,
         });
     }
 
@@ -283,10 +292,12 @@ async fn batch_compare(
                         } else {
                             crate::reporting::ReportStatus::Fail
                         },
-                        format!(
-                            "{:.2}% diff (dimensions_match={}, early_exit={})",
-                            result.diff_percent, result.dimensions_match, result.early_exit
-                        ),
+                        result.message.clone().unwrap_or_else(|| {
+                            format!(
+                                "{:.2}% diff (dimensions_match={}, early_exit={})",
+                                result.diff_percent, result.dimensions_match, result.early_exit
+                            )
+                        }),
                     )
                 })
                 .collect(),
@@ -468,6 +479,7 @@ struct CompareResult {
     passed: bool,
     dimensions_match: bool,
     early_exit: bool,
+    message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -486,6 +498,7 @@ struct SingleCompareOutput {
 mod tests {
     use super::*;
     use image::{DynamicImage, Rgba, RgbaImage};
+    use tempfile::tempdir;
 
     fn image_from_pixels(pixels: &[[u8; 4]], width: u32, height: u32) -> DynamicImage {
         let mut img = RgbaImage::new(width, height);
@@ -545,5 +558,38 @@ mod tests {
         let result = calculate_diff_internal(&img1, &img2, 0, Some(10.0), true).unwrap();
         assert!(result.early_exit);
         assert!(result.diff_percent > 10.0);
+    }
+
+    #[tokio::test]
+    async fn batch_report_includes_missing_counterpart_files() {
+        let base = tempdir().expect("tempdir");
+        let design_dir = base.path().join("design");
+        let screenshot_dir = base.path().join("screenshots");
+        std::fs::create_dir_all(&design_dir).expect("design dir");
+        std::fs::create_dir_all(&screenshot_dir).expect("screenshot dir");
+
+        let design_image = design_dir.join("screen.png");
+        RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255]))
+            .save(&design_image)
+            .expect("design image");
+
+        let report_path = base.path().join("compare.json");
+        let result = batch_compare(
+            &design_dir,
+            &screenshot_dir,
+            None,
+            Some(&report_path),
+            crate::reporting::ReportFormat::Json,
+            0.0,
+            0,
+            false,
+        )
+        .await;
+
+        assert!(result.is_err());
+
+        let report = std::fs::read_to_string(&report_path).expect("report");
+        assert!(report.contains("screen.png"));
+        assert!(report.contains("missing in screenshot dir"));
     }
 }

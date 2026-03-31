@@ -23,14 +23,14 @@ pub async fn run(command: SnapshotCommands) -> Result<()> {
             watch: should_watch,
             watch_interval,
         } => {
-            create(&file_key_or_url, &name, &node, pick, &output).await?;
+            let selected_nodes = create(&file_key_or_url, &name, &node, pick, &output).await?;
             if should_watch {
                 let token = get_token()?;
                 let client = FigmaClient::new(token)?;
                 let parsed = FigmaUrl::parse(&file_key_or_url)?;
                 let rerun_file_key = file_key_or_url.clone();
                 let rerun_name = name.clone();
-                let rerun_nodes = node.clone();
+                let (rerun_nodes, rerun_pick) = watch_rerun_selection(&node, &selected_nodes, pick);
                 let rerun_output = output.clone();
                 watch::watch_file_changes(&client, &parsed.file_key, watch_interval, move || {
                     let rerun_file_key = rerun_file_key.clone();
@@ -42,10 +42,11 @@ pub async fn run(command: SnapshotCommands) -> Result<()> {
                             &rerun_file_key,
                             &rerun_name,
                             &rerun_nodes,
-                            pick,
+                            rerun_pick,
                             &rerun_output,
                         )
                         .await
+                        .map(|_| ())
                     }
                 })
                 .await?;
@@ -96,7 +97,7 @@ async fn create(
     nodes: &[String],
     pick: bool,
     output: &Path,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
     let config = Config::load().unwrap_or_default();
@@ -204,7 +205,19 @@ async fn create(
         name,
         snapshot_dir.display()
     ));
-    Ok(())
+    Ok(ids_to_export)
+}
+
+fn watch_rerun_selection(
+    nodes: &[String],
+    picked_nodes: &[String],
+    pick: bool,
+) -> (Vec<String>, bool) {
+    if pick && !picked_nodes.is_empty() {
+        return (picked_nodes.to_vec(), false);
+    }
+
+    (nodes.to_vec(), pick)
 }
 
 fn list(dir: &Path) -> Result<()> {
@@ -244,6 +257,20 @@ fn list(dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::watch_rerun_selection;
+
+    #[test]
+    fn watch_rerun_reuses_initial_pick_results() {
+        let picked = vec!["1:2".to_string(), "1:3".to_string()];
+        let (nodes, pick) = watch_rerun_selection(&[], &picked, true);
+
+        assert_eq!(nodes, picked);
+        assert!(!pick);
+    }
 }
 
 async fn diff(

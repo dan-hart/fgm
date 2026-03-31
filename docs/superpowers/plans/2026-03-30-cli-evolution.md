@@ -1,7 +1,5 @@
 # FGM CLI Evolution Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Implement the approved `fgm` CLI roadmap phases in order: Foundation, Workflow UX, then Intelligence and scale.
 
 **Architecture:** Keep the existing subcommand-oriented CLI and add a shared internal workflow layer for project bootstrapping, diagnostics, reporting, selection, watching, and orchestration. New capabilities should extend existing commands rather than replacing them.

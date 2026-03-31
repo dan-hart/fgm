@@ -14,10 +14,10 @@ The result should stay script-first, preserve the current command-line ergonomic
 
 `fgm` already has a strong command-oriented shape:
 
-- [src/cli.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/cli.rs) defines a clear Clap-driven interface.
-- [src/main.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/main.rs) dispatches each command module cleanly.
-- [src/config.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/config.rs) persists defaults and auth fallback state.
-- Command modules such as [src/commands/export.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/commands/export.rs), [src/commands/compare.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/commands/compare.rs), [src/commands/sync.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/commands/sync.rs), and [src/commands/map.rs](/Users/danhart/Developer/fgm/.worktrees/codex-phase-123/src/commands/map.rs) already cover the core Figma workflows.
+- [src/cli.rs](../../../src/cli.rs) defines a clear Clap-driven interface.
+- [src/main.rs](../../../src/main.rs) dispatches each command module cleanly.
+- [src/config.rs](../../../src/config.rs) persists defaults and auth fallback state.
+- Command modules such as [src/commands/export.rs](../../../src/commands/export.rs), [src/commands/compare.rs](../../../src/commands/compare.rs), [src/commands/sync.rs](../../../src/commands/sync.rs), and [src/commands/map.rs](../../../src/commands/map.rs) already cover the core Figma workflows.
 
 The missing piece is not “more commands” by itself. It is a reusable workflow layer that lets new features share:
 
