@@ -284,6 +284,9 @@ async fn export(
         TokenFormat::Css => export_css(&tokens, &config.tokens.css_prefix),
         TokenFormat::Swift => export_swift(&tokens, &config.tokens.swift_prefix),
         TokenFormat::Kotlin => export_kotlin(&tokens, &config.tokens.swift_prefix),
+        TokenFormat::Tailwind => export_tailwind(&tokens),
+        TokenFormat::StyleDictionary => export_style_dictionary(&tokens)?,
+        TokenFormat::AndroidXml => export_android_xml(&tokens),
     };
 
     if let Some(path) = output_path {
@@ -441,6 +444,80 @@ fn export_kotlin(tokens: &DesignTokens, prefix: &str) -> String {
     }
     kotlin.push_str("}\n");
     kotlin
+}
+
+fn export_tailwind(tokens: &DesignTokens) -> String {
+    let mut output = String::from("export default {\n  theme: {\n    extend: {\n      colors: {\n");
+    for color in &tokens.colors {
+        output.push_str(&format!(
+            "        '{}': '{}',\n",
+            sanitize_token_name(&color.name),
+            color.hex
+        ));
+    }
+    output.push_str("      },\n      fontSize: {\n");
+    for token in &tokens.typography {
+        if let Some(size) = token.size {
+            output.push_str(&format!(
+                "        '{}': '{}px',\n",
+                sanitize_token_name(&token.name),
+                size.round()
+            ));
+        }
+    }
+    output.push_str("      },\n    },\n  },\n};\n");
+    output
+}
+
+fn export_style_dictionary(tokens: &DesignTokens) -> Result<String> {
+    let mut color = serde_json::Map::new();
+    for token in &tokens.colors {
+        color.insert(
+            token.name.clone(),
+            serde_json::json!({ "value": token.hex }),
+        );
+    }
+
+    let mut typography = serde_json::Map::new();
+    for token in &tokens.typography {
+        typography.insert(
+            token.name.clone(),
+            serde_json::json!({
+                "family": token.family,
+                "size": token.size,
+                "weight": token.weight,
+                "lineHeight": token.line_height,
+                "letterSpacing": token.letter_spacing
+            }),
+        );
+    }
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "color": color,
+        "typography": typography
+    }))?)
+}
+
+fn export_android_xml(tokens: &DesignTokens) -> String {
+    let mut xml = String::from("<resources>\n");
+    for color in &tokens.colors {
+        xml.push_str(&format!(
+            "  <color name=\"{}\">{}</color>\n",
+            sanitize_token_name(&color.name),
+            color.hex
+        ));
+    }
+    for token in &tokens.typography {
+        if let Some(size) = token.size {
+            xml.push_str(&format!(
+                "  <dimen name=\"font_{}_size\">{:.0}sp</dimen>\n",
+                sanitize_token_name(&token.name),
+                size
+            ));
+        }
+    }
+    xml.push_str("</resources>\n");
+    xml
 }
 
 fn ensure_css_prefix(prefix: &str) -> String {
@@ -608,5 +685,42 @@ fn collect_typography(
         for child in children {
             collect_typography(child, tokens, seen, used_names);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_tokens() -> DesignTokens {
+        DesignTokens {
+            colors: vec![ColorToken {
+                name: "Brand Primary".to_string(),
+                hex: "#112233".to_string(),
+                rgb: [17, 34, 51],
+                rgba: [0.067, 0.133, 0.2, 1.0],
+            }],
+            typography: vec![TypographyToken {
+                name: "Heading".to_string(),
+                family: Some("IBM Plex Sans".to_string()),
+                size: Some(24.0),
+                weight: Some(700.0),
+                line_height: Some(28.0),
+                letter_spacing: Some(0.0),
+            }],
+        }
+    }
+
+    #[test]
+    fn tailwind_export_contains_colors_and_sizes() {
+        let output = export_tailwind(&sample_tokens());
+        assert!(output.contains("brand-primary"));
+        assert!(output.contains("24px"));
+    }
+
+    #[test]
+    fn android_xml_export_contains_color_entry() {
+        let output = export_android_xml(&sample_tokens());
+        assert!(output.contains("<color name=\"brand-primary\">#112233</color>"));
     }
 }

@@ -1,5 +1,6 @@
 use crate::cli::CompareArgs;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportSummary};
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use image::{GenericImageView, Rgba};
@@ -17,6 +18,7 @@ pub async fn run(args: CompareArgs) -> Result<()> {
             &args.image2,
             args.output.as_deref(),
             args.report.as_deref(),
+            args.report_format,
             args.threshold,
             args.tolerance,
             args.fast,
@@ -27,6 +29,8 @@ pub async fn run(args: CompareArgs) -> Result<()> {
             &args.image1,
             &args.image2,
             args.output.as_deref(),
+            args.report.as_deref(),
+            args.report_format,
             args.threshold,
             args.tolerance,
             args.fast,
@@ -39,6 +43,8 @@ async fn single_compare(
     image1_path: &Path,
     image2_path: &Path,
     output_path: Option<&Path>,
+    report_path: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
     threshold: f32,
     tolerance: u8,
     fast: bool,
@@ -75,6 +81,24 @@ async fn single_compare(
 
     let diff_percent = result.diff_percent;
     let passed = diff_percent <= threshold;
+    let report_summary = ReportSummary {
+        title: "fgm compare".to_string(),
+        items: vec![ReportItem::new(
+            image2_path.display().to_string(),
+            if passed {
+                crate::reporting::ReportStatus::Ok
+            } else {
+                crate::reporting::ReportStatus::Fail
+            },
+            format!(
+                "Compared {} against {} ({:.2}% diff, threshold {:.2}%)",
+                image1_path.display(),
+                image2_path.display(),
+                diff_percent,
+                threshold
+            ),
+        )],
+    };
 
     if passed {
         output::print_status(&format!(
@@ -120,6 +144,14 @@ async fn single_compare(
         output::print_json(&result)?;
     }
 
+    if let Some(report) = report_path {
+        write_report(report, report_format, &report_summary)?;
+        output::print_status(&format!(
+            "  Report: {}",
+            report.display().to_string().cyan()
+        ));
+    }
+
     if !passed {
         anyhow::bail!("Pixel diff exceeded threshold");
     }
@@ -132,6 +164,7 @@ async fn batch_compare(
     dir2: &Path,
     output_dir: Option<&Path>,
     report_path: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
     threshold: f32,
     tolerance: u8,
     fast: bool,
@@ -168,6 +201,14 @@ async fn batch_compare(
                 "missing in screenshot dir"
             ));
             failed += 1;
+            results.push(CompareResult {
+                file: filename.to_string_lossy().to_string(),
+                diff_percent: 100.0,
+                passed: false,
+                dimensions_match: false,
+                early_exit: false,
+                message: Some("missing in screenshot dir".to_string()),
+            });
             continue;
         }
 
@@ -220,6 +261,7 @@ async fn batch_compare(
             passed: passes,
             dimensions_match: diff_result.dimensions_match,
             early_exit: diff_result.early_exit,
+            message: None,
         });
     }
 
@@ -237,8 +279,30 @@ async fn batch_compare(
     };
 
     if let Some(report) = report_path {
-        let json = serde_json::to_string_pretty(&report_data)?;
-        fs::write(report, json)?;
+        let summary = ReportSummary {
+            title: "fgm compare batch".to_string(),
+            items: report_data
+                .results
+                .iter()
+                .map(|result| {
+                    ReportItem::new(
+                        &result.file,
+                        if result.passed {
+                            crate::reporting::ReportStatus::Ok
+                        } else {
+                            crate::reporting::ReportStatus::Fail
+                        },
+                        result.message.clone().unwrap_or_else(|| {
+                            format!(
+                                "{:.2}% diff (dimensions_match={}, early_exit={})",
+                                result.diff_percent, result.dimensions_match, result.early_exit
+                            )
+                        }),
+                    )
+                })
+                .collect(),
+        };
+        write_report(report, report_format, &summary)?;
         output::print_status(&format!(
             "  Report: {}",
             report.display().to_string().cyan()
@@ -415,6 +479,7 @@ struct CompareResult {
     passed: bool,
     dimensions_match: bool,
     early_exit: bool,
+    message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -433,6 +498,7 @@ struct SingleCompareOutput {
 mod tests {
     use super::*;
     use image::{DynamicImage, Rgba, RgbaImage};
+    use tempfile::tempdir;
 
     fn image_from_pixels(pixels: &[[u8; 4]], width: u32, height: u32) -> DynamicImage {
         let mut img = RgbaImage::new(width, height);
@@ -492,5 +558,38 @@ mod tests {
         let result = calculate_diff_internal(&img1, &img2, 0, Some(10.0), true).unwrap();
         assert!(result.early_exit);
         assert!(result.diff_percent > 10.0);
+    }
+
+    #[tokio::test]
+    async fn batch_report_includes_missing_counterpart_files() {
+        let base = tempdir().expect("tempdir");
+        let design_dir = base.path().join("design");
+        let screenshot_dir = base.path().join("screenshots");
+        std::fs::create_dir_all(&design_dir).expect("design dir");
+        std::fs::create_dir_all(&screenshot_dir).expect("screenshot dir");
+
+        let design_image = design_dir.join("screen.png");
+        RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255]))
+            .save(&design_image)
+            .expect("design image");
+
+        let report_path = base.path().join("compare.json");
+        let result = batch_compare(
+            &design_dir,
+            &screenshot_dir,
+            None,
+            Some(&report_path),
+            crate::reporting::ReportFormat::Json,
+            0.0,
+            0,
+            false,
+        )
+        .await;
+
+        assert!(result.is_err());
+
+        let report = std::fs::read_to_string(&report_path).expect("report");
+        assert!(report.contains("screen.png"));
+        assert!(report.contains("missing in screenshot dir"));
     }
 }

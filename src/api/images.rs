@@ -49,7 +49,8 @@ impl FigmaClient {
         let cache_key = CacheKey::Images(file_key.to_string(), params_hash);
 
         // Check cache first
-        if let Some((cached, freshness)) = self.cache().get_with_freshness::<ImageResponse>(&cache_key)
+        if let Some((cached, freshness)) =
+            self.cache().get_with_freshness::<ImageResponse>(&cache_key)
         {
             if !cached.images.is_empty() {
                 match freshness {
@@ -72,7 +73,9 @@ impl FigmaClient {
                             );
                             if let Ok(fresh) = client.get_json::<ImageResponse>(&url).await {
                                 if fresh.err.is_none() && !fresh.images.is_empty() {
-                                    client.cache().set(&refresh_key, &fresh, CacheTTL::IMAGE_URLS);
+                                    client
+                                        .cache()
+                                        .set(&refresh_key, &fresh, CacheTTL::IMAGE_URLS);
                                 }
                             }
                         });

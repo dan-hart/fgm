@@ -3,6 +3,9 @@ use crate::auth::get_token;
 use crate::cli::SnapshotCommands;
 use crate::config::Config;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportStatus, ReportSummary};
+use crate::select;
+use crate::watch;
 use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -15,15 +18,60 @@ pub async fn run(command: SnapshotCommands) -> Result<()> {
             file_key_or_url,
             name,
             node,
+            pick,
             output,
-        } => create(&file_key_or_url, &name, &node, &output).await,
+            watch: should_watch,
+            watch_interval,
+        } => {
+            let selected_nodes = create(&file_key_or_url, &name, &node, pick, &output).await?;
+            if should_watch {
+                let token = get_token()?;
+                let client = FigmaClient::new(token)?;
+                let parsed = FigmaUrl::parse(&file_key_or_url)?;
+                let rerun_file_key = file_key_or_url.clone();
+                let rerun_name = name.clone();
+                let (rerun_nodes, rerun_pick) = watch_rerun_selection(&node, &selected_nodes, pick);
+                let rerun_output = output.clone();
+                watch::watch_file_changes(&client, &parsed.file_key, watch_interval, move || {
+                    let rerun_file_key = rerun_file_key.clone();
+                    let rerun_name = rerun_name.clone();
+                    let rerun_nodes = rerun_nodes.clone();
+                    let rerun_output = rerun_output.clone();
+                    async move {
+                        create(
+                            &rerun_file_key,
+                            &rerun_name,
+                            &rerun_nodes,
+                            rerun_pick,
+                            &rerun_output,
+                        )
+                        .await
+                        .map(|_| ())
+                    }
+                })
+                .await?;
+            }
+            Ok(())
+        }
         SnapshotCommands::List { dir } => list(&dir),
         SnapshotCommands::Diff {
             from,
             to,
             dir,
             output,
-        } => diff(&from, &to, &dir, output.as_deref()).await,
+            report,
+            report_format,
+        } => {
+            diff(
+                &from,
+                &to,
+                &dir,
+                output.as_deref(),
+                report.as_deref(),
+                report_format,
+            )
+            .await
+        }
     }
 }
 
@@ -43,7 +91,13 @@ struct NodeSnapshot {
     filename: String,
 }
 
-async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Path) -> Result<()> {
+async fn create(
+    file_key_or_url: &str,
+    name: &str,
+    nodes: &[String],
+    pick: bool,
+    output: &Path,
+) -> Result<Vec<String>> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
     let config = Config::load().unwrap_or_default();
@@ -76,7 +130,11 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
     let file = client.get_file(file_key).await?;
 
     // Determine which nodes to snapshot
-    let ids_to_export: Vec<String> = if node_ids.is_empty() {
+    let ids_to_export: Vec<String> = if pick {
+        let options = select::top_level_frame_options(&file.document);
+        let picked = select::pick_options(&options, true)?;
+        picked.into_iter().map(|item| item.id).collect()
+    } else if node_ids.is_empty() {
         // Default to all top-level frames
         extract_frame_info(&file.document)
             .into_iter()
@@ -147,7 +205,19 @@ async fn create(file_key_or_url: &str, name: &str, nodes: &[String], output: &Pa
         name,
         snapshot_dir.display()
     ));
-    Ok(())
+    Ok(ids_to_export)
+}
+
+fn watch_rerun_selection(
+    nodes: &[String],
+    picked_nodes: &[String],
+    pick: bool,
+) -> (Vec<String>, bool) {
+    if pick && !picked_nodes.is_empty() {
+        return (picked_nodes.to_vec(), false);
+    }
+
+    (nodes.to_vec(), pick)
 }
 
 fn list(dir: &Path) -> Result<()> {
@@ -189,7 +259,28 @@ fn list(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result<()> {
+#[cfg(test)]
+mod tests {
+    use super::watch_rerun_selection;
+
+    #[test]
+    fn watch_rerun_reuses_initial_pick_results() {
+        let picked = vec!["1:2".to_string(), "1:3".to_string()];
+        let (nodes, pick) = watch_rerun_selection(&[], &picked, true);
+
+        assert_eq!(nodes, picked);
+        assert!(!pick);
+    }
+}
+
+async fn diff(
+    from: &str,
+    to: &str,
+    dir: &Path,
+    output: Option<&Path>,
+    report: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
+) -> Result<()> {
     let from_dir = dir.join(from);
     let to_dir = dir.join(to);
 
@@ -237,6 +328,7 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
     let mut changed = 0;
     let mut added = 0;
     let mut removed = 0;
+    let mut report_items = Vec::new();
 
     // Compare each node from the "from" snapshot
     for from_node in &from_meta.nodes {
@@ -260,6 +352,11 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
                     from_node.name,
                     diff_percent
                 ));
+                report_items.push(ReportItem::new(
+                    from_node.name.clone(),
+                    ReportStatus::Warn,
+                    format!("{:.1}% different", diff_percent),
+                ));
 
                 // Generate diff image if output specified
                 if let Some(out_dir) = diff_output {
@@ -275,11 +372,13 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
                     "=".dimmed(),
                     from_node.name.dimmed()
                 ));
+                report_items.push(ReportItem::ok(from_node.name.clone(), "Unchanged"));
             }
         } else {
             // Node was removed
             removed += 1;
             output::print_status(&format!("  {} {} (removed)", "-".red(), from_node.name));
+            report_items.push(ReportItem::fail(from_node.name.clone(), "Removed"));
         }
     }
 
@@ -289,6 +388,7 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
             added += 1;
             total += 1;
             output::print_status(&format!("  {} {} (added)", "+".green(), to_node.name));
+            report_items.push(ReportItem::ok(to_node.name.clone(), "Added"));
         }
     }
 
@@ -301,6 +401,15 @@ async fn diff(from: &str, to: &str, dir: &Path, output: Option<&Path>) -> Result
 
     if let Some(out_dir) = diff_output {
         output::print_status(&format!("  Diff images saved to: {}", out_dir.display()));
+    }
+
+    if let Some(report_path) = report {
+        let summary = ReportSummary {
+            title: format!("fgm snapshot diff {} -> {}", from, to),
+            items: report_items,
+        };
+        write_report(report_path, report_format, &summary)?;
+        output::print_status(&format!("  Report: {}", report_path.display()));
     }
 
     Ok(())

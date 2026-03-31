@@ -4,6 +4,10 @@ mod cli;
 mod commands;
 mod config;
 mod output;
+mod project;
+mod reporting;
+mod select;
+mod watch;
 
 use anyhow::Result;
 use clap::Parser;
@@ -63,6 +67,8 @@ async fn main() -> Result<()> {
     }
 
     let result = match cli.command {
+        Commands::Doctor(args) => commands::doctor::run(args).await,
+        Commands::Init(args) => commands::init::run(args).await,
         Commands::Auth { command } => commands::auth::run(command).await,
         Commands::Files { command } => commands::files::run(command).await,
         Commands::Export { command } => commands::export::run(command).await,
@@ -76,6 +82,7 @@ async fn main() -> Result<()> {
         Commands::Map { command } => commands::map::run(command).await,
         Commands::Cache { command } => commands::cache::run(command).await,
         Commands::Config { command } => commands::config::run(command).await,
+        Commands::Run(args) => commands::run::run(args).await,
         Commands::Quick(args) => commands::export::run_quick(args).await,
     };
 

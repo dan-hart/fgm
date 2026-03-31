@@ -2,6 +2,7 @@ use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::SyncArgs;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportSummary};
 use anyhow::Result;
 use colored::Colorize;
 use serde::Deserialize;
@@ -30,6 +31,7 @@ pub async fn run(args: SyncArgs) -> Result<()> {
     let mut synced = 0;
     let mut skipped = 0;
     let mut errors = 0;
+    let mut report_items = Vec::new();
 
     for (name, asset) in &manifest.assets {
         output::print_status("");
@@ -44,6 +46,10 @@ pub async fn run(args: SyncArgs) -> Result<()> {
             None => {
                 output::print_status(&format!("    {}: Missing node ID", "skip".yellow()));
                 skipped += 1;
+                report_items.push(ReportItem::warn(
+                    name.to_string(),
+                    "Missing node ID in manifest or URL".to_string(),
+                ));
                 continue;
             }
         };
@@ -59,6 +65,10 @@ pub async fn run(args: SyncArgs) -> Result<()> {
                 output_path.display()
             ));
             skipped += 1;
+            report_items.push(ReportItem::warn(
+                name.to_string(),
+                format!("Skipped existing file {}", output_path.display()),
+            ));
             continue;
         }
 
@@ -69,6 +79,10 @@ pub async fn run(args: SyncArgs) -> Result<()> {
                 output_path.display()
             ));
             synced += 1;
+            report_items.push(ReportItem::ok(
+                name.to_string(),
+                format!("Dry run: would export to {}", output_path.display()),
+            ));
             continue;
         }
 
@@ -82,6 +96,10 @@ pub async fn run(args: SyncArgs) -> Result<()> {
                 scale
             ));
             errors += 1;
+            report_items.push(ReportItem::fail(
+                name.to_string(),
+                format!("Scale {} is out of range", scale),
+            ));
             continue;
         }
 
@@ -98,10 +116,15 @@ pub async fn run(args: SyncArgs) -> Result<()> {
             Ok(_) => {
                 output::print_status(&format!("    {} {}", "✓".green(), output_path.display()));
                 synced += 1;
+                report_items.push(ReportItem::ok(
+                    name.to_string(),
+                    format!("Exported to {}", output_path.display()),
+                ));
             }
             Err(e) => {
                 output::print_status(&format!("    {}: {}", "error".red(), e));
                 errors += 1;
+                report_items.push(ReportItem::fail(name.to_string(), e.to_string()));
             }
         }
 
@@ -124,6 +147,15 @@ pub async fn run(args: SyncArgs) -> Result<()> {
                 .yellow()
                 .to_string(),
         );
+    }
+
+    if let Some(report_path) = args.report.as_deref() {
+        let summary = ReportSummary {
+            title: "fgm sync".to_string(),
+            items: report_items,
+        };
+        write_report(report_path, args.report_format, &summary)?;
+        output::print_status(&format!("  Report: {}", report_path.display()));
     }
 
     if errors > 0 {

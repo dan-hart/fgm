@@ -3,6 +3,7 @@ use crate::auth::get_token;
 use crate::cli::{ImageProtocol, PreviewArgs};
 use crate::config::Config;
 use crate::output;
+use crate::select;
 use anyhow::Result;
 use colored::Colorize;
 use image::GenericImageView;
@@ -22,6 +23,15 @@ pub async fn run(args: PreviewArgs) -> Result<()> {
     // Get node ID - either from args or get first frame
     let target_node = if let Some(id) = node_id {
         id
+    } else if args.pick {
+        let file = client.get_file(&parsed.file_key).await?;
+        output::print_status(&format!("  File: {}", file.name.cyan()));
+        let options = select::top_level_frame_options(&file.document);
+        let picked = select::pick_options(&options, false)?;
+        picked
+            .first()
+            .map(|item| item.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("No frames selected"))?
     } else {
         // Get file and find first frame
         let file = client.get_file(&parsed.file_key).await?;

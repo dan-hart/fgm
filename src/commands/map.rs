@@ -2,6 +2,8 @@ use crate::api::{FigmaClient, FigmaUrl};
 use crate::auth::get_token;
 use crate::cli::MapCommands;
 use crate::output;
+use crate::reporting::{write_report, ReportItem, ReportStatus, ReportSummary};
+use crate::select;
 use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -13,10 +15,16 @@ pub async fn run(command: MapCommands) -> Result<()> {
     match command {
         MapCommands::Init {
             file_key_or_url,
+            pick,
             output,
-        } => init(&file_key_or_url, &output).await,
+        } => init(&file_key_or_url, pick, &output).await,
         MapCommands::Coverage { map } => coverage(&map),
         MapCommands::Update { map } => update(&map).await,
+        MapCommands::Verify {
+            map,
+            report,
+            report_format,
+        } => verify(&map, report.as_deref(), report_format).await,
         MapCommands::Link {
             component,
             code_path,
@@ -81,7 +89,7 @@ impl std::fmt::Display for ComponentStatus {
 }
 
 /// Initialize a component map from a Figma file
-async fn init(file_key_or_url: &str, output: &Path) -> Result<()> {
+async fn init(file_key_or_url: &str, pick: bool, output: &Path) -> Result<()> {
     let token = get_token()?;
     let client = FigmaClient::new(token)?;
 
@@ -114,6 +122,18 @@ async fn init(file_key_or_url: &str, output: &Path) -> Result<()> {
                 },
             );
         }
+    }
+
+    if pick {
+        let options = select::component_options(
+            components
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.figma_name.clone())),
+        );
+        let picked = select::pick_options(&options, true)?;
+        let picked_ids: std::collections::HashSet<_> =
+            picked.into_iter().map(|item| item.id).collect();
+        components.retain(|key, _| picked_ids.contains(key));
     }
 
     let map = ComponentMap {
@@ -301,6 +321,115 @@ async fn update(map_path: &Path) -> Result<()> {
     output::print_success("Updated!");
     output::print_status(&format!("  Added: {}", added));
     output::print_status(&format!("  Potentially removed: {}", removed));
+
+    Ok(())
+}
+
+async fn verify(
+    map_path: &Path,
+    report: Option<&Path>,
+    report_format: crate::reporting::ReportFormat,
+) -> Result<()> {
+    let content = fs::read_to_string(map_path)?;
+    let map: ComponentMap = toml::from_str(&content)?;
+
+    let token = get_token()?;
+    let client = FigmaClient::new(token)?;
+    let file = client.get_file(&map.figma.file_key).await?;
+
+    let mut current_components = HashMap::new();
+    extract_components(&file.document, &mut current_components);
+    for (key, comp) in &file.components {
+        current_components
+            .entry(key.clone())
+            .or_insert(ComponentEntry {
+                node_id: key.clone(),
+                figma_name: comp.name.clone(),
+                code_path: None,
+                status: ComponentStatus::NotStarted,
+                notes: None,
+            });
+    }
+
+    let mut items = Vec::new();
+
+    for (key, entry) in &map.components {
+        if entry.code_path.is_none() {
+            items.push(ReportItem::warn(
+                entry.figma_name.clone(),
+                "No linked code path".to_string(),
+            ));
+        }
+        if let Some(path) = &entry.code_path {
+            if !Path::new(path).exists() {
+                items.push(ReportItem::fail(
+                    entry.figma_name.clone(),
+                    format!("Broken code path {}", path),
+                ));
+            }
+        }
+        if !current_components.contains_key(key) {
+            items.push(ReportItem::fail(
+                entry.figma_name.clone(),
+                "Component no longer exists in Figma".to_string(),
+            ));
+        }
+    }
+
+    for (key, entry) in &current_components {
+        if !map.components.contains_key(key) {
+            items.push(ReportItem::warn(
+                entry.figma_name.clone(),
+                "Component exists in Figma but is missing from the map".to_string(),
+            ));
+        }
+    }
+
+    let mut code_path_counts: HashMap<&str, usize> = HashMap::new();
+    for entry in map.components.values() {
+        if let Some(path) = entry.code_path.as_deref() {
+            *code_path_counts.entry(path).or_insert(0) += 1;
+        }
+    }
+    for (path, count) in code_path_counts {
+        if count > 1 {
+            items.push(ReportItem::warn(
+                path.to_string(),
+                format!("Shared by {} mapped components", count),
+            ));
+        }
+    }
+
+    if items.is_empty() {
+        items.push(ReportItem::ok(
+            map.figma.file_name.clone(),
+            "Map verification passed cleanly".to_string(),
+        ));
+    }
+
+    let summary = ReportSummary {
+        title: format!("fgm map verify {}", map.figma.file_name),
+        items,
+    };
+
+    output::print_status(&summary.title.bold().to_string());
+    for item in &summary.items {
+        let marker = match item.status {
+            ReportStatus::Ok => "ok".green(),
+            ReportStatus::Warn => "warn".yellow(),
+            ReportStatus::Fail => "fail".red(),
+        };
+        output::print_status(&format!("  {:<6} {}: {}", marker, item.name, item.message));
+    }
+
+    if let Some(report_path) = report {
+        write_report(report_path, report_format, &summary)?;
+        output::print_status(&format!("  Report: {}", report_path.display()));
+    }
+
+    if summary.exit_code() != 0 {
+        anyhow::bail!("Map verification found issues");
+    }
 
     Ok(())
 }

@@ -165,12 +165,16 @@ impl RateLimiter {
             RequestClass::Metadata => {
                 self.class_counts.metadata = self.class_counts.metadata.saturating_add(1)
             }
-            RequestClass::Nodes => self.class_counts.nodes = self.class_counts.nodes.saturating_add(1),
+            RequestClass::Nodes => {
+                self.class_counts.nodes = self.class_counts.nodes.saturating_add(1)
+            }
             RequestClass::Images => {
                 self.class_counts.images = self.class_counts.images.saturating_add(1)
             }
             RequestClass::Team => self.class_counts.team = self.class_counts.team.saturating_add(1),
-            RequestClass::Other => self.class_counts.other = self.class_counts.other.saturating_add(1),
+            RequestClass::Other => {
+                self.class_counts.other = self.class_counts.other.saturating_add(1)
+            }
             RequestClass::Download => {
                 self.class_counts.download = self.class_counts.download.saturating_add(1)
             }
