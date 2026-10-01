@@ -131,7 +131,7 @@ impl FigmaClient {
     /// consistent error handling.
     pub async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
         let response = self
-            .execute_request(RequestClass::Download, || self.http().get(url))
+            .execute_request(RequestClass::Download, || self.download_http().get(url))
             .await?;
 
         if !response.status().is_success() {

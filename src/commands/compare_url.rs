@@ -9,7 +9,6 @@ use crate::watch;
 use anyhow::Result;
 use colored::Colorize;
 use serde::Serialize;
-use std::fs;
 
 /// Compare a Figma design directly against a screenshot
 /// Exports the Figma frame and runs pixel comparison in one command
@@ -80,14 +79,18 @@ async fn run_once(args: &CompareUrlArgs) -> Result<()> {
     output::print_status("  Downloading export...");
     let figma_bytes = client.download_image(url).await?;
 
-    // Create temp file for Figma export
-    let temp_dir = std::env::temp_dir();
-    let figma_path = temp_dir.join(format!("fgm-compare-{}.png", node_id.replace(':', "-")));
-    fs::write(&figma_path, &figma_bytes)?;
-
     // Load both images
-    let figma_img = image::open(&figma_path)?;
-    let screenshot_img = image::open(&args.screenshot)?;
+    let figma_img = image::load_from_memory(&figma_bytes)?;
+    let screenshot_img = if let Some(path) = &args.screenshot {
+        image::open(path)?
+    } else {
+        crate::workflows::capture(&args.device).await?
+    };
+    let screenshot_label = args
+        .screenshot
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "device capture".to_owned());
 
     output::print_status("");
     output::print_status(&"Comparing images...".bold().to_string());
@@ -114,7 +117,7 @@ async fn run_once(args: &CompareUrlArgs) -> Result<()> {
             let out = CompareUrlOutput {
                 file_key: parsed.file_key.clone(),
                 node_id: node_id.clone(),
-                screenshot: args.screenshot.display().to_string(),
+                screenshot: screenshot_label.clone(),
                 diff_percent,
                 threshold: args.threshold,
                 passed: false,
@@ -132,17 +135,14 @@ async fn run_once(args: &CompareUrlArgs) -> Result<()> {
                     node_id.clone(),
                     format!(
                         "Dimension mismatch comparing exported frame against {}",
-                        args.screenshot.display()
+                        screenshot_label
                     ),
                 )],
             };
             write_report(report_path, args.report_format, &summary)?;
         }
 
-        // Clean up temp file
-        let _ = fs::remove_file(&figma_path);
-
-        return Ok(());
+        anyhow::bail!("Image dimensions do not match");
     }
 
     // Calculate difference
@@ -189,7 +189,7 @@ async fn run_once(args: &CompareUrlArgs) -> Result<()> {
         let out = CompareUrlOutput {
             file_key: parsed.file_key.clone(),
             node_id: node_id.clone(),
-            screenshot: args.screenshot.display().to_string(),
+            screenshot: screenshot_label.clone(),
             diff_percent,
             threshold: args.threshold,
             passed: diff_percent <= args.threshold,
@@ -210,19 +210,12 @@ async fn run_once(args: &CompareUrlArgs) -> Result<()> {
                 } else {
                     ReportStatus::Fail
                 },
-                format!(
-                    "{:.2}% diff against {}",
-                    diff_percent,
-                    args.screenshot.display()
-                ),
+                format!("{:.2}% diff against {}", diff_percent, screenshot_label),
             )],
         };
         write_report(report_path, args.report_format, &summary)?;
         output::print_status(&format!("  Report: {}", report_path.display()));
     }
-
-    // Clean up temp file
-    let _ = fs::remove_file(&figma_path);
 
     // Exit with appropriate code for CI
     if diff_percent > args.threshold {

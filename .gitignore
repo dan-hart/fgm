@@ -39,6 +39,13 @@ config.local.json
 /test-output/
 /tmp/
 
+# Local project design data and review bundles
+fgm.toml
+.fgm/
+fgm-pack/
+fgm-review/
+fgm-exports/
+
 # Keychain exports
 *.keychain
 *.keychain-db

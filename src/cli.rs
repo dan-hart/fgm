@@ -47,6 +47,9 @@ AUTH QUICKSTART:
 Learn more: https://github.com/dan-hart/fgm")]
 #[command(propagate_version = true)]
 pub struct Cli {
+    /// Isolated credentials, settings and cache (distinct from export --profile)
+    #[arg(long, global = true)]
+    pub account: Option<String>,
     /// Output format (table or json)
     #[arg(long, global = true, value_enum, help = "Output format")]
     pub format: Option<OutputFormat>,
@@ -83,6 +86,18 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Search frame/component names, optionally saving a project alias
+    Find(crate::workflows::FindArgs),
+    /// Capture an iOS simulator or Android device screenshot
+    Capture(crate::workflows::CaptureArgs),
+    /// Mobile comparison with masks, normalization and a portable HTML bundle
+    Review(crate::workflows::ReviewArgs),
+    /// Export a scoped agent pack with layout metadata and a contact sheet
+    Pack(crate::workflows::PackArgs),
+    /// Resolve Figma variables, modes and aliases, live or from JSON
+    Variables(crate::variables::VariableArgs),
+    /// Verify local component source paths and symbols without Figma access
+    CheckMap(crate::workflows::CheckMapArgs),
     /// Diagnose local setup, auth, config, and project health
     Doctor(DoctorArgs),
 
@@ -104,7 +119,7 @@ pub enum Commands {
     /// Export assets from Figma (PNG, SVG, PDF, JPG)
     Export {
         #[command(subcommand)]
-        command: ExportCommands,
+        command: Option<ExportCommands>,
     },
 
     /// Compare local design images with screenshots
@@ -424,7 +439,10 @@ Use --llm-pack to emit a manifest.json for LLM workflows.")]
     fgm export file abc123 --node \"1:2\" --platform android -o ./android/")]
     File {
         /// Figma file key or URL (node-id in URL will be used automatically)
-        #[arg(help = "File key (abc123) or URL with optional ?node-id=")]
+        #[arg(
+            default_value = "",
+            help = "File key, URL or project source when omitted"
+        )]
         file_key_or_url: String,
         /// Node IDs to export (can specify multiple: --node \"1:2\" --node \"1:3\")
         #[arg(
@@ -800,8 +818,10 @@ pub struct CompareUrlArgs {
     #[arg(help = "Figma URL with ?node-id= parameter")]
     pub figma_url: String,
     /// Local screenshot to compare against
-    #[arg(help = "Path to screenshot image")]
-    pub screenshot: PathBuf,
+    #[arg(help = "Path to screenshot image", conflicts_with_all = ["simulator", "android"])]
+    pub screenshot: Option<PathBuf>,
+    #[command(flatten)]
+    pub device: crate::workflows::DeviceArgs,
     /// Save visual diff image to this path
     #[arg(short, long, help = "Save diff visualization to file")]
     pub output: Option<PathBuf>,
@@ -1119,6 +1139,9 @@ the Figma component, enabling coverage tracking."
         /// Path to the code file that implements this component
         #[arg(help = "Path to implementation file")]
         code_path: PathBuf,
+        /// Source declaration to verify (SwiftUI, Compose or web)
+        #[arg(long)]
+        symbol: Option<String>,
         /// Component map file
         #[arg(
             short,
@@ -1279,7 +1302,7 @@ mod tests {
 
         match cli.command {
             Commands::Export {
-                command: ExportCommands::File { profile, .. },
+                command: Some(ExportCommands::File { profile, .. }),
             } => {
                 assert!(matches!(profile, Some(ExportProfile::PixelPerfect)));
             }
@@ -1303,7 +1326,7 @@ mod tests {
 
         match cli.command {
             Commands::Export {
-                command: ExportCommands::File { profile, delta, .. },
+                command: Some(ExportCommands::File { profile, delta, .. }),
             } => {
                 assert!(matches!(profile, Some(ExportProfile::LowRate)));
                 assert!(delta);
@@ -1364,12 +1387,12 @@ mod tests {
         match cli.command {
             Commands::Export {
                 command:
-                    ExportCommands::File {
+                    Some(ExportCommands::File {
                         pick,
                         watch,
                         watch_interval,
                         ..
-                    },
+                    }),
             } => {
                 assert!(pick);
                 assert!(watch);

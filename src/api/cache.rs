@@ -202,7 +202,8 @@ impl FigmaCache {
 
     /// Get the default cache directory path
     pub fn default_cache_dir() -> Option<PathBuf> {
-        directories::ProjectDirs::from("", "", "fgm").map(|dirs| dirs.cache_dir().to_path_buf())
+        directories::ProjectDirs::from("", "", "fgm")
+            .map(|dirs| crate::profile::directory(dirs.cache_dir().to_path_buf()))
     }
 
     /// Get value from cache (memory first, then disk)

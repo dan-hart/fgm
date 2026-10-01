@@ -53,6 +53,8 @@ pub struct ProjectSection {
 pub struct ProjectExportSection {
     #[serde(default = "default_export_output_dir")]
     pub output_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,8 @@ pub struct ProjectReportsSection {
 pub struct ProjectFigmaSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub aliases: std::collections::BTreeMap<String, String>,
 }
 
 impl ProjectConfigFile {
@@ -98,6 +102,7 @@ impl Default for ProjectExportSection {
     fn default() -> Self {
         Self {
             output_dir: default_export_output_dir(),
+            scale: None,
         }
     }
 }
@@ -166,7 +171,11 @@ pub fn init_workspace_with_source(
     let sync_manifest = StarterSyncManifest::starter(project_name);
     write_toml_file(&plan.sync_manifest_path, &sync_manifest, force)?;
 
-    let components_map = StarterComponentsMap::default();
+    let mut components_map = StarterComponentsMap::default();
+    components_map.figma.file_name = project_name.to_owned();
+    if let Some(source) = figma_source {
+        components_map.figma.file_key = crate::api::FigmaUrl::parse(source)?.file_key;
+    }
     write_toml_file(&plan.components_map_path, &components_map, force)?;
 
     Ok(())
@@ -223,8 +232,16 @@ struct StarterSyncProject {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct StarterComponentsMap {
+    figma: StarterMapSource,
     #[serde(default)]
-    components: Vec<String>,
+    components: std::collections::BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StarterMapSource {
+    file_key: String,
+    file_name: String,
+    last_sync: String,
 }
 
 #[cfg(test)]

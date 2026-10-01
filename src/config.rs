@@ -112,7 +112,8 @@ impl Default for TokensConfig {
 impl Config {
     /// Get the config directory path
     pub fn config_dir() -> Option<PathBuf> {
-        ProjectDirs::from("", "", "fgm").map(|dirs| dirs.config_dir().to_path_buf())
+        ProjectDirs::from("", "", "fgm")
+            .map(|dirs| crate::profile::directory(dirs.config_dir().to_path_buf()))
     }
 
     /// Get the config file path

@@ -34,7 +34,104 @@ cp target/release/fgm ~/.local/bin/
 fgm --version
 ```
 
-## Authentication
+## Mobile And Agent Workflows
+
+Project defaults are discovered from the nearest parent `fgm.toml`. Relative
+export and snapshot directories resolve against that file, not the current shell
+directory. Explicit command-line values win, including an explicit threshold of 5.
+
+```toml
+[project]
+name = "example-app"
+[figma]
+source = "https://www.figma.com/design/abc123/Example"
+[figma.aliases]
+settings-dark = "https://www.figma.com/design/abc123/Example?node-id=1-2"
+[export]
+output_dir = "designs"
+scale = 2
+[compare]
+threshold = 3
+[snapshot]
+dir = ".fgm/snapshots"
+```
+
+```bash
+# Export the saved source without repeating configuration
+fgm export
+fgm export file settings-dark
+
+# Find frames/components; saving an alias requires exactly one match
+fgm find Settings --page Mobile --exact --save-as settings-dark
+
+# Capture a booted simulator or an authorized Android device
+fgm capture --simulator booted -o screenshot.png
+fgm capture --android connected -o screenshot.png
+fgm compare-url settings-dark --simulator booted
+
+# Crop screenshot safe areas, ignore volatile regions, and write a review bundle
+fgm review design.png --screenshot screenshot.png --crop-top 48 --crop-bottom 34 \
+  --mask 0,0,100,30 --output review
+fgm review --source settings-dark --android connected --normalize --open
+
+# Scope an agent pack to matching screens or a node URL/alias
+fgm pack --query Settings --page Mobile --output agent-pack --changed-only
+
+# Resolve variables and aliases in every mode, with semantic native identifiers
+fgm variables --source abc123 --target swift -o Variables.swift
+fgm variables --import variables.json --target kotlin -o Variables.kt
+
+# Offline source coverage; paths are relative to the project or map directory
+fgm check-map .fgm/components.toml --root .
+fgm map link Settings src/SettingsView.swift --symbol SettingsView
+
+# Credentials, settings, cache and keychain entries isolated by account
+fgm --account personal auth login --keychain
+fgm --account team export file abc123 --all-frames
+```
+
+`review` writes `index.html`, `report.json`, design, screenshot, overlay and diff
+PNGs. The HTML uses only relative assets and works offline. Difference percentages
+exclude masked pixels; overlapping masks are counted once. Masks are applied to
+the saved images, not just the score. `--normalize` is opt-in because resizing can
+hide size/layout errors. Without it, dimension mismatches always fail, as they now
+also do in `compare`, batch comparison and `compare-url`.
+
+Use `review --share` to omit Figma source URLs and version metadata. This is **not
+automatic privacy certification**: inspect the images for names, notifications,
+proprietary designs and other sensitive content before sharing. Default generated
+directories and `fgm.toml` are gitignored in this repository; custom output paths
+must be ignored separately.
+
+Packs contain a contact sheet and full selected node trees, including layout
+measurements, typography and component properties supplied by Figma. Manifest
+entries include contact-sheet indexes and source links but no signed download
+URLs. `--changed-only` skips unchanged-version exports and otherwise checks fresh
+image content before rewriting assets. A file-version change triggers a fresh
+render to account for external style/variable dependencies. Pack metadata is local
+design data and must also be reviewed before sharing.
+
+Local variables JSON must contain `meta.variables` and `meta.variableCollections`
+(or those objects directly at the root), matching the
+[Figma Variables REST response](https://developers.figma.com/docs/rest-api/variables-endpoints/).
+Live access depends on plan, seat, token scopes and file permissions. Missing alias
+targets and cycles fail rather than silently producing partial tokens. Cross-
+collection aliases use the target collection's default mode when no matching mode
+ID exists; extended collections are rejected explicitly. Swift, Kotlin and CSS
+exports group tokens by collection and mode. Existing `tokens export` native output
+also preserves paint opacity and includes typography helpers. Compose typography
+retains font-family metadata; callers must resolve custom font resources themselves.
+
+Maps may add `symbol = "SettingsView"` alongside `code_path`. The offline checker
+recognizes common Swift, Kotlin and JavaScript/TypeScript declarations and ignores
+comments/string literals. It is a source-presence check, not a compiler, inheritance
+resolver or proof that a UI renders correctly.
+
+Account names use letters, digits, hyphens and underscores. The existing export
+`--profile` remains a preset, not an account. `FIGMA_TOKEN` still has highest
+priority for all accounts; unset it to use account-specific stored credentials.
+
+## Authentication Setup
 
 Get a Figma Personal Access Token:
 https://www.figma.com/developers/api#access-tokens

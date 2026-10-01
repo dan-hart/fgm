@@ -17,6 +17,7 @@ const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 10;
 /// Figma API client with integrated caching and rate limiting
 pub struct FigmaClient {
     client: Client,
+    download_client: Client,
     #[allow(dead_code)]
     token: String,
     cache: Arc<FigmaCache>,
@@ -32,6 +33,7 @@ impl Clone for FigmaClient {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
+            download_client: self.download_client.clone(),
             token: self.token.clone(),
             cache: self.cache.clone(),
             rate_limiter: self.rate_limiter.clone(),
@@ -63,10 +65,14 @@ impl FigmaClient {
         let client = Client::builder()
             .default_headers(headers)
             .user_agent(user_agent)
+            .timeout(std::time::Duration::from_secs(120))
             .build()?;
 
         Ok(Self {
             client,
+            download_client: Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()?,
             token,
             cache,
             rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
@@ -92,6 +98,10 @@ impl FigmaClient {
     /// Get a reference to the underlying HTTP client
     pub fn http(&self) -> &Client {
         &self.client
+    }
+
+    pub fn download_http(&self) -> &Client {
+        &self.download_client
     }
 
     /// Get a reference to the cache

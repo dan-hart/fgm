@@ -4,19 +4,25 @@ mod cli;
 mod commands;
 mod config;
 mod output;
+mod profile;
 mod project;
 mod reporting;
 mod select;
+mod variables;
 mod watch;
+mod workflows;
 
-use anyhow::Result;
-use clap::Parser;
+use anyhow::{Context, Result};
+use clap::{CommandFactory, FromArgMatches};
 use cli::{Cli, Commands};
 use output::{OutputFormat, Verbosity};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let mut cli = Cli::from_arg_matches(&matches)?;
+    profile::select(cli.account.as_deref())?;
+    workflows::apply_project_defaults(&mut cli.command, &matches)?;
 
     // Load config for defaults
     let mut config_error: Option<String> = None;
@@ -67,11 +73,19 @@ async fn main() -> Result<()> {
     }
 
     let result = match cli.command {
+        Commands::Find(args) => workflows::find(args).await,
+        Commands::Capture(args) => workflows::capture_command(args).await,
+        Commands::Review(args) => workflows::review(args).await,
+        Commands::Pack(args) => workflows::pack(args).await,
+        Commands::Variables(args) => variables::run(args).await,
+        Commands::CheckMap(args) => workflows::check_map(args),
         Commands::Doctor(args) => commands::doctor::run(args).await,
         Commands::Init(args) => commands::init::run(args).await,
         Commands::Auth { command } => commands::auth::run(command).await,
         Commands::Files { command } => commands::files::run(command).await,
-        Commands::Export { command } => commands::export::run(command).await,
+        Commands::Export { command } => {
+            commands::export::run(command.context("Missing export command")?).await
+        }
         Commands::Compare(args) => commands::compare::run(args).await,
         Commands::CompareUrl(args) => commands::compare_url::run(args).await,
         Commands::Tokens { command } => commands::tokens::run(command).await,

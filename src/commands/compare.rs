@@ -80,7 +80,7 @@ async fn single_compare(
     )?;
 
     let diff_percent = result.diff_percent;
-    let passed = diff_percent <= threshold;
+    let passed = result.dimensions_match && diff_percent <= threshold;
     let report_summary = ReportSummary {
         title: "fgm compare".to_string(),
         items: vec![ReportItem::new(
@@ -222,7 +222,7 @@ async fn batch_compare(
             Some(threshold),
             fast && output_dir.is_none(),
         )?;
-        let passes = diff_result.diff_percent <= threshold;
+        let passes = diff_result.dimensions_match && diff_result.diff_percent <= threshold;
 
         if passes {
             passed += 1;

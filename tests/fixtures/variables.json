@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "variableCollections": {
+      "theme": {
+        "name": "Theme",
+        "defaultModeId": "light",
+        "modes": [
+          {"modeId": "light", "name": "Light"},
+          {"modeId": "dark", "name": "Dark"}
+        ]
+      }
+    },
+    "variables": {
+      "surface": {
+        "name": "surface/default",
+        "variableCollectionId": "theme",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "light": {"r": 1, "g": 1, "b": 1, "a": 0.5},
+          "dark": {"r": 0, "g": 0, "b": 0, "a": 1}
+        }
+      },
+      "alias": {
+        "name": "surface/alias",
+        "variableCollectionId": "theme",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "light": {"type": "VARIABLE_ALIAS", "id": "surface"},
+          "dark": {"type": "VARIABLE_ALIAS", "id": "surface"}
+        }
+      },
+      "text": {
+        "name": "label/example",
+        "variableCollectionId": "theme",
+        "resolvedType": "STRING",
+        "valuesByMode": {"light": "Quote: \" $label \\ newline\n", "dark": "Dark"}
+      },
+      "spacing": {
+        "name": "spacing/base",
+        "variableCollectionId": "theme",
+        "resolvedType": "FLOAT",
+        "valuesByMode": {"light": 8, "dark": 8}
+      },
+      "enabled": {
+        "name": "feature/enabled",
+        "variableCollectionId": "theme",
+        "resolvedType": "BOOLEAN",
+        "valuesByMode": {"light": true, "dark": false}
+      }
+    }
+  }
+}

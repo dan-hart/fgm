@@ -29,7 +29,8 @@ pub async fn run(command: MapCommands) -> Result<()> {
             component,
             code_path,
             map,
-        } => link(&component, &code_path, &map),
+            symbol,
+        } => link(&component, &code_path, &map, symbol.as_deref()),
     }
 }
 
@@ -59,6 +60,8 @@ struct ComponentEntry {
     /// Path to code implementation (if linked)
     #[serde(default)]
     code_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symbol: Option<String>,
     /// Implementation status
     #[serde(default)]
     status: ComponentStatus,
@@ -113,6 +116,7 @@ async fn init(file_key_or_url: &str, pick: bool, output: &Path) -> Result<()> {
                     node_id: key.clone(),
                     figma_name: comp.name.clone(),
                     code_path: None,
+                    symbol: None,
                     status: ComponentStatus::NotStarted,
                     notes: if comp.description.is_empty() {
                         None
@@ -255,7 +259,7 @@ fn coverage(map_path: &Path) -> Result<()> {
     let mut broken_links = Vec::new();
     for comp in implemented.iter().chain(in_progress.iter()) {
         if let Some(path) = &comp.code_path {
-            if !Path::new(path).exists() {
+            if !crate::workflows::map_root(map_path).join(path).is_file() {
                 broken_links.push((&comp.figma_name, path));
             }
         }
@@ -346,6 +350,7 @@ async fn verify(
                 node_id: key.clone(),
                 figma_name: comp.name.clone(),
                 code_path: None,
+                symbol: None,
                 status: ComponentStatus::NotStarted,
                 notes: None,
             });
@@ -361,11 +366,20 @@ async fn verify(
             ));
         }
         if let Some(path) = &entry.code_path {
-            if !Path::new(path).exists() {
+            let resolved = crate::workflows::map_root(map_path).join(path);
+            if !resolved.is_file() {
                 items.push(ReportItem::fail(
                     entry.figma_name.clone(),
                     format!("Broken code path {}", path),
                 ));
+            } else if let Some(symbol) = &entry.symbol {
+                let text = fs::read_to_string(resolved)?;
+                if !crate::workflows::declares_symbol(&text, symbol) {
+                    items.push(ReportItem::fail(
+                        entry.figma_name.clone(),
+                        format!("Missing source declaration {symbol}"),
+                    ));
+                }
             }
         }
         if !current_components.contains_key(key) {
@@ -435,7 +449,7 @@ async fn verify(
 }
 
 /// Link a component to its code implementation
-fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
+fn link(component: &str, code_path: &Path, map_path: &Path, symbol: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(map_path)?;
     let mut map: ComponentMap = toml::from_str(&content)?;
 
@@ -461,6 +475,9 @@ fn link(component: &str, code_path: &Path, map_path: &Path) -> Result<()> {
     // Update the entry
     if let Some(entry) = map.components.get_mut(&key) {
         entry.code_path = Some(code_path.to_string_lossy().to_string());
+        if let Some(symbol) = symbol {
+            entry.symbol = Some(symbol.to_owned());
+        }
         entry.status = ComponentStatus::Implemented;
 
         output::print_success("Linked!");
@@ -490,6 +507,7 @@ fn extract_components(
                     node_id: node.id.clone(),
                     figma_name: node.name.clone(),
                     code_path: None,
+                    symbol: None,
                     status: ComponentStatus::NotStarted,
                     notes: None,
                 },

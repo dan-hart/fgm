@@ -41,7 +41,8 @@ pub async fn run(args: RunArgs) -> Result<()> {
             } => {
                 commands::compare_url::run(CompareUrlArgs {
                     figma_url,
-                    screenshot,
+                    screenshot: Some(screenshot),
+                    device: Default::default(),
                     output: None,
                     threshold: threshold.unwrap_or(5.0),
                     scale,

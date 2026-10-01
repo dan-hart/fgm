@@ -271,7 +271,17 @@ async fn export(
             rgba: [color.r, color.g, color.b, color.a],
         })
         .collect();
-    colors.sort_by(|a, b| a.hex.cmp(&b.hex));
+    // Node paths provide useful semantic names even when no published style exists.
+    let mut semantic = Vec::new();
+    if let Some(children) = &file.document.children {
+        for node in children {
+            collect_semantic_colors(node, "", &mut semantic);
+        }
+    }
+    if !semantic.is_empty() {
+        colors = semantic;
+    }
+    colors.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut typography: Vec<TypographyToken> = Vec::new();
     extract_typography_tokens(&file.document, &mut typography);
@@ -312,6 +322,35 @@ fn extract_all_colors(node: &impl HasFillsAndChildren, colors: &mut HashMap<Stri
     if let Some(children) = node.children() {
         for child in children {
             extract_all_colors(child, colors);
+        }
+    }
+}
+
+fn collect_semantic_colors(node: &Node, parent: &str, colors: &mut Vec<ColorToken>) {
+    let path = format!("{parent}/{}", node.name);
+    if let Some(fills) = &node.fills {
+        for (index, fill) in fills.iter().enumerate() {
+            if fill.paint_type != "SOLID" {
+                continue;
+            }
+            if let Some(color) = &fill.color {
+                colors.push(ColorToken {
+                    name: format!("{path}/fill-{index}/{}", node.id),
+                    hex: color.to_hex(),
+                    rgb: color.to_rgb(),
+                    rgba: [
+                        color.r,
+                        color.g,
+                        color.b,
+                        color.a * fill.opacity.unwrap_or(1.0),
+                    ],
+                });
+            }
+        }
+    }
+    if let Some(children) = &node.children {
+        for child in children {
+            collect_semantic_colors(child, &path, colors);
         }
     }
 }
@@ -375,10 +414,10 @@ fn export_swift(tokens: &DesignTokens, prefix: &str) -> String {
 
     swift.push_str(&format!("enum {}Colors {{\n", type_prefix));
     for color in &tokens.colors {
-        let name = to_pascal_case(&color.name);
+        let name = crate::variables::identifier(&color.name);
         swift.push_str(&format!(
-            "    static let {} = Color(red: {:.3}, green: {:.3}, blue: {:.3})\n",
-            name, color.rgba[0], color.rgba[1], color.rgba[2]
+            "    static let {} = Color(red: {:.6}, green: {:.6}, blue: {:.6}, opacity: {:.6})\n",
+            name, color.rgba[0], color.rgba[1], color.rgba[2], color.rgba[3]
         ));
     }
     swift.push_str("}\n\n");
@@ -389,11 +428,13 @@ fn export_swift(tokens: &DesignTokens, prefix: &str) -> String {
     swift.push_str("    let weight: Double?\n");
     swift.push_str("    let lineHeight: Double?\n");
     swift.push_str("    let letterSpacing: Double?\n");
+    swift.push_str("    var font: Font { (family.map { Font.custom($0, size: size ?? 14) } ?? Font.system(size: size ?? 14)).weight(nativeWeight) }\n");
+    swift.push_str("    private var nativeWeight: Font.Weight { switch weight ?? 400 { case ..<150: return .ultraLight; case ..<250: return .thin; case ..<350: return .light; case ..<450: return .regular; case ..<550: return .medium; case ..<650: return .semibold; case ..<750: return .bold; case ..<850: return .heavy; default: return .black } }\n");
     swift.push_str("}\n\n");
 
     swift.push_str(&format!("enum {}Typography {{\n", type_prefix));
     for token in &tokens.typography {
-        let name = to_pascal_case(&token.name);
+        let name = crate::variables::identifier(&token.name);
         swift.push_str(&format!(
             "    static let {} = TypographyToken(family: {}, size: {}, weight: {}, lineHeight: {}, letterSpacing: {})\n",
             name,
@@ -411,13 +452,15 @@ fn export_swift(tokens: &DesignTokens, prefix: &str) -> String {
 fn export_kotlin(tokens: &DesignTokens, prefix: &str) -> String {
     let type_prefix = sanitize_type_name(prefix);
     let mut kotlin =
-        String::from("package design.tokens\n\nimport androidx.compose.ui.graphics.Color\n\n");
+        String::from("package design.tokens\n\nimport androidx.compose.ui.graphics.Color\nimport androidx.compose.ui.text.TextStyle\nimport androidx.compose.ui.text.font.FontWeight\nimport androidx.compose.ui.unit.sp\n\n");
 
     kotlin.push_str(&format!("object {}Colors {{\n", type_prefix));
     for color in &tokens.colors {
-        let name = to_pascal_case(&color.name);
-        let hex = color.hex.trim_start_matches('#');
-        kotlin.push_str(&format!("    val {} = Color(0xFF{})\n", name, hex));
+        let name = crate::variables::identifier(&color.name);
+        kotlin.push_str(&format!(
+            "    val {} = Color(red = {}f, green = {}f, blue = {}f, alpha = {}f)\n",
+            name, color.rgba[0], color.rgba[1], color.rgba[2], color.rgba[3]
+        ));
     }
     kotlin.push_str("}\n\n");
 
@@ -427,11 +470,11 @@ fn export_kotlin(tokens: &DesignTokens, prefix: &str) -> String {
     kotlin.push_str("    val weight: Float?,\n");
     kotlin.push_str("    val lineHeight: Float?,\n");
     kotlin.push_str("    val letterSpacing: Float?\n");
-    kotlin.push_str(")\n\n");
+    kotlin.push_str(") {\n    fun textStyle(): TextStyle = TextStyle(fontSize = (size ?: 14f).sp, fontWeight = FontWeight((weight ?: 400f).toInt().coerceIn(1, 1000)), lineHeight = (lineHeight ?: size ?: 14f).sp, letterSpacing = (letterSpacing ?: 0f).sp)\n}\n\n");
 
     kotlin.push_str(&format!("object {}Typography {{\n", type_prefix));
     for token in &tokens.typography {
-        let name = to_pascal_case(&token.name);
+        let name = crate::variables::identifier(&token.name);
         kotlin.push_str(&format!(
             "    val {} = TypographyToken({}, {}, {}, {}, {})\n",
             name,
@@ -545,62 +588,19 @@ fn sanitize_token_name(name: &str) -> String {
 }
 
 fn sanitize_type_name(prefix: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in prefix.chars().enumerate() {
-        if c.is_ascii_alphanumeric() {
-            if i == 0 && c.is_ascii_digit() {
-                out.push('_');
-            }
-            out.push(c);
-        }
-    }
-    if out.is_empty() {
-        "Figma".to_string()
-    } else {
-        out
-    }
-}
-
-fn to_pascal_case(name: &str) -> String {
-    let mut out = String::new();
-    let mut next_upper = true;
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            if next_upper {
-                out.push(c.to_ascii_uppercase());
-                next_upper = false;
-            } else {
-                out.push(c.to_ascii_lowercase());
-            }
-        } else {
-            next_upper = true;
-        }
-    }
-    if out.is_empty() {
-        "Token".to_string()
-    } else {
-        if out
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_digit())
-            .unwrap_or(false)
-        {
-            out.insert(0, '_');
-        }
-        out
-    }
+    crate::variables::identifier(prefix)
 }
 
 fn optional_string(value: &Option<String>) -> String {
     match value {
-        Some(v) => format!("\"{}\"", v.replace('"', "\\\"")),
+        Some(v) => crate::variables::native_string(v, false),
         None => "nil".to_string(),
     }
 }
 
 fn optional_string_kotlin(value: &Option<String>) -> String {
     match value {
-        Some(v) => format!("\"{}\"", v.replace('"', "\\\"")),
+        Some(v) => crate::variables::native_string(v, true),
         None => "null".to_string(),
     }
 }
@@ -722,5 +722,46 @@ mod tests {
     fn android_xml_export_contains_color_entry() {
         let output = export_android_xml(&sample_tokens());
         assert!(output.contains("<color name=\"brand-primary\">#112233</color>"));
+    }
+
+    #[test]
+    fn native_exports_preserve_alpha_and_escape_strings() {
+        let mut tokens = sample_tokens();
+        tokens.colors[0].rgba[3] = 0.25;
+        tokens.typography[0].family = Some("A\\B\n\"$name".into());
+        let swift = export_swift(&tokens, "1 bad-prefix");
+        let kotlin = export_kotlin(&tokens, "class");
+        assert!(swift.contains("opacity: 0.250000"));
+        assert!(swift.contains("A\\\\B\\n\\\"$name"));
+        assert!(kotlin.contains("alpha = 0.25f"));
+        assert!(kotlin.contains("\\$name"));
+        assert!(kotlin.contains("fun textStyle()"));
+        assert_eq!(swift, export_swift(&tokens, "1 bad-prefix"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn swift_export_typechecks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Tokens.swift");
+        fs::write(&path, export_swift(&sample_tokens(), "Figma")).unwrap();
+        let out = std::process::Command::new("swiftc")
+            .arg("-typecheck")
+            .arg("-module-cache-path")
+            .arg(dir.path().join("cache"))
+            .arg(path)
+            .output()
+            .expect("Swift compiler required for native generator validation");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "Requires FGM_KOTLIN_COMPILER_CLASSPATH and FGM_KOTLIN_COMPOSE_CLASSPATH"]
+    fn kotlin_export_typechecks() {
+        crate::variables::typecheck_kotlin(&export_kotlin(&sample_tokens(), "Figma"));
     }
 }

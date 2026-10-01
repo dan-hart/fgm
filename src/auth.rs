@@ -8,7 +8,6 @@ use crate::output;
 use crate::config::Config;
 
 const SERVICE_NAME: &str = "fgm";
-const USERNAME: &str = "figma_token";
 static KEYCHAIN_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Token source information for debugging
@@ -98,7 +97,7 @@ pub fn get_token_from_keychain() -> Result<String> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, USERNAME)
+    let entry = Entry::new(SERVICE_NAME, &crate::profile::keychain_user())
         .context("Failed to create keychain entry - keychain may not be available")?;
 
     entry.get_password().map_err(|e| match e {
@@ -131,7 +130,8 @@ pub fn store_token_in_keychain(token: &str) -> Result<()> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, USERNAME).context("Failed to create keychain entry")?;
+    let entry = Entry::new(SERVICE_NAME, &crate::profile::keychain_user())
+        .context("Failed to create keychain entry")?;
 
     entry
         .set_password(token)
@@ -187,7 +187,8 @@ pub fn remove_token_from_keychain() -> Result<()> {
     if !is_keychain_enabled() {
         return Err(anyhow!("Keychain access disabled"));
     }
-    let entry = Entry::new(SERVICE_NAME, USERNAME).context("Failed to create keychain entry")?;
+    let entry = Entry::new(SERVICE_NAME, &crate::profile::keychain_user())
+        .context("Failed to create keychain entry")?;
 
     entry.delete_credential().map_err(|e| match e {
         keyring::Error::NoEntry => anyhow!("No token in keychain"),
@@ -233,6 +234,6 @@ pub fn test_keychain_access() -> Result<()> {
 }
 
 /// Get keychain service and username for debugging
-pub fn get_keychain_info() -> (&'static str, &'static str) {
-    (SERVICE_NAME, USERNAME)
+pub fn get_keychain_info() -> (&'static str, String) {
+    (SERVICE_NAME, crate::profile::keychain_user())
 }

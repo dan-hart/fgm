@@ -19,7 +19,7 @@ pub fn should_rerun(previous: Option<&str>, current: &str) -> bool {
 }
 
 pub async fn fetch_file_version(client: &FigmaClient, file_key: &str) -> Result<String> {
-    Ok(client.get_file(file_key).await?.version)
+    Ok(client.get_file_cached(file_key, true).await?.version)
 }
 
 async fn process_watch_iteration<F, Fut>(
@@ -79,6 +79,12 @@ where
     loop {
         tokio::time::sleep(interval).await;
         let current_version = fetch_file_version(client, file_key).await;
+        if current_version
+            .as_ref()
+            .is_ok_and(|v| should_rerun(Some(&last_version), v))
+        {
+            client.cache().invalidate_file(file_key);
+        }
         process_watch_iteration(&mut last_version, current_version, &mut on_change).await;
     }
 }
